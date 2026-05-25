@@ -1,0 +1,411 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - ANPR Admin{% endblock %}
+
+{% block page_title %}Dashboard{% endblock %}
+{% block page_subtitle %}Real-time monitoring and analytics for your license plate recognition system{% endblock %}
+
+{% block content %}
+<!-- Action Bar -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="action-bar">
+            <div class="d-flex justify-content-start align-items-center">
+                <div class="action-content">
+                    <button class="btn btn-primary btn-modern btn-modern-enhanced" onclick="refreshStats()">
+                        <i class="bi bi-arrow-clockwise me-2"></i>Refresh Data
+                    </button>
+                    <button class="btn btn-outline-primary btn-modern btn-modern-enhanced ms-2">
+                        <i class="bi bi-download me-2"></i>Export Data
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Statistics Cards -->
+<div class="row mb-5">
+    <div class="col-xl-3 col-md-6 mb-4">
+        <div class="card stats-card-modern card-modern-enhanced">
+            <div class="card-body">
+                <div class="stats-header">
+                    <div class="stats-icon-modern bg-primary-gradient">
+                        <i class="bi bi-camera-video"></i>
+                    </div>
+                    <div class="stats-trend positive">
+                        <i class="bi bi-arrow-up"></i>
+                        <span>+12%</span>
+                    </div>
+                </div>
+                <div class="stats-content">
+                    <h6 class="stats-label">Total Detections</h6>
+                    <h2 class="stats-value" id="total-detections">{{ stats.total_detections or 0 }}</h2>
+                    <p class="stats-description">All time detections</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-xl-3 col-md-6 mb-4">
+        <div class="card stats-card-modern card-modern-enhanced">
+            <div class="card-body">
+                <div class="stats-header">
+                    <div class="stats-icon-modern bg-success-gradient">
+                        <i class="bi bi-check-circle"></i>
+                    </div>
+                    <div class="stats-trend positive">
+                        <i class="bi bi-arrow-up"></i>
+                        <span>+8%</span>
+                    </div>
+                </div>
+                <div class="stats-content">
+                    <h6 class="stats-label">Verified Plates</h6>
+                    <h2 class="stats-value" id="verified-detections">{{ stats.verified_detections or 0 }}</h2>
+                    <p class="stats-description">Successfully verified</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-xl-3 col-md-6 mb-4">
+        <div class="card stats-card-modern card-modern-enhanced">
+            <div class="card-body">
+                <div class="stats-header">
+                    <div class="stats-icon-modern bg-warning-gradient">
+                        <i class="bi bi-exclamation-triangle"></i>
+                    </div>
+                    <div class="stats-trend negative">
+                        <i class="bi bi-arrow-down"></i>
+                        <span>-5%</span>
+                    </div>
+                </div>
+                <div class="stats-content">
+                    <h6 class="stats-label">Unverified Plates</h6>
+                    <h2 class="stats-value" id="unverified-detections">{{ stats.unverified_detections or 0 }}</h2>
+                    <p class="stats-description">Require attention</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-xl-3 col-md-6 mb-4">
+        <div class="card stats-card-modern card-modern-enhanced">
+            <div class="card-body">
+                <div class="stats-header">
+                    <div class="stats-icon-modern bg-info-gradient">
+                        <i class="bi bi-percent"></i>
+                    </div>
+                    <div class="stats-trend positive">
+                        <i class="bi bi-arrow-up"></i>
+                        <span>+3%</span>
+                    </div>
+                </div>
+                <div class="stats-content">
+                    <h6 class="stats-label">Verification Rate</h6>
+                    <h2 class="stats-value" id="verification-rate">{{ stats.verification_rate or 0 }}%</h2>
+                    <p class="stats-description">Success rate</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Additional Stats Row -->
+<div class="row mb-4">
+    <div class="col-xl-4 col-md-6 mb-4">
+        <div class="card stats-card border-0 shadow-sm">
+            <div class="card-body">
+                <div class="d-flex align-items-center">
+                    <div class="stats-icon bg-secondary">
+                        <i class="bi bi-camera"></i>
+                    </div>
+                    <div class="ms-3">
+                        <h6 class="card-title text-muted mb-1">Active Cameras</h6>
+                        <h3 class="mb-0">{{ stats.active_cameras or 0 }}/{{ stats.total_cameras or 0 }}</h3>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-xl-4 col-md-6 mb-4">
+        <div class="card stats-card border-0 shadow-sm">
+            <div class="card-body">
+                <div class="d-flex align-items-center">
+                    <div class="stats-icon bg-dark">
+                        <i class="bi bi-credit-card"></i>
+                    </div>
+                    <div class="ms-3">
+                        <h6 class="card-title text-muted mb-1">Allowed Plates</h6>
+                        <h3 class="mb-0">{{ stats.total_allowed_plates or 0 }}</h3>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-xl-4 col-md-6 mb-4">
+        <div class="card stats-card border-0 shadow-sm">
+            <div class="card-body">
+                <div class="d-flex align-items-center">
+                    <div class="stats-icon bg-danger">
+                        <i class="bi bi-calendar-day"></i>
+                    </div>
+                    <div class="ms-3">
+                        <h6 class="card-title text-muted mb-1">Today's Detections</h6>
+                        <h3 class="mb-0" id="today-detections">-</h3>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+        <!-- System Status & Real-Time Info -->
+        <div class="row mb-4">
+            <div class="col-lg-6 mb-4">
+                <div class="card card-modern-enhanced">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="card-title mb-0">
+                            <i class="bi bi-activity me-2"></i>System Status
+                        </h5>
+                        <div class="d-flex align-items-center">
+                            <span class="badge badge-modern bg-success-gradient me-2" id="systemStatus">Online</span>
+                            <div class="live-indicator" id="liveIndicator" style="display: none;">
+                                <i class="bi bi-circle-fill text-success"></i>
+                                <span class="ms-1 small">Live</span>
+                            </div>
+                            <div class="ms-3">
+                                <button class="btn btn-sm btn-outline-success me-2" onclick="startANPRService()" id="startServiceBtn">
+                                    <i class="bi bi-play-circle me-1"></i>Start
+                                </button>
+                                <button class="btn btn-sm btn-outline-danger me-2" onclick="stopANPRService()" id="stopServiceBtn">
+                                    <i class="bi bi-stop-circle me-1"></i>Stop
+                                </button>
+                                <button class="btn btn-sm btn-outline-primary" onclick="restartANPRService()" id="restartServiceBtn">
+                                    <i class="bi bi-arrow-clockwise me-1"></i>Restart
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-6">
+                                <div class="status-item">
+                                    <div class="status-label">ANPR Service</div>
+                                    <div class="status-value" id="anprServiceStatus">
+                                        <i class="bi bi-circle-fill text-success me-1"></i>
+                                        <span>Running</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-6">
+                                <div class="status-item">
+                                    <div class="status-label">Last Detection</div>
+                                    <div class="status-value" id="lastDetection">
+                                        <i class="bi bi-clock me-1"></i>
+                                        <span>Never</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="row mt-3">
+                            <div class="col-6">
+                                <div class="status-item">
+                                    <div class="status-label">Active Cameras</div>
+                                    <div class="status-value" id="activeCameras">
+                                        <i class="bi bi-camera me-1"></i>
+                                        <span>{{ enabled_cameras }}/{{ total_cameras }}</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-6">
+                                <div class="status-item">
+                                    <div class="status-label">Uptime</div>
+                                    <div class="status-value" id="systemUptime">
+                                        <i class="bi bi-stopwatch me-1"></i>
+                                        <span>Calculating...</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-lg-6 mb-4">
+                <div class="card card-modern-enhanced">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="card-title mb-0">
+                            <i class="bi bi-graph-up me-2"></i>Live Activity
+                        </h5>
+                        <div class="d-flex align-items-center">
+                            <button class="btn btn-sm btn-outline-primary" onclick="refreshLiveData()">
+                                <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="activity-feed" id="activityFeed">
+                            <div class="activity-item">
+                                <div class="activity-icon bg-primary-gradient">
+                                    <i class="bi bi-info-circle"></i>
+                                </div>
+                                <div class="activity-content">
+                                    <div class="activity-text">System monitoring started</div>
+                                    <div class="activity-time">Just now</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+<!-- Recent Detections -->
+<div class="row">
+    <div class="col-12">
+        <div class="card card-modern-enhanced">
+            <div class="card-header bg-white border-0 d-flex justify-content-between align-items-center">
+                <h5 class="card-title mb-0">
+                    <i class="bi bi-clock-history me-2"></i>Recent Detections
+                </h5>
+                <a href="{{ url_for('detection.detections') }}" class="btn btn-sm btn-outline-primary">
+                    View All <i class="bi bi-arrow-right ms-1"></i>
+                </a>
+            </div>
+            <div class="card-body">
+                {% if recent_detections %}
+                <div class="table-responsive">
+                    <table class="table table-modern table-hover">
+                        <thead>
+                            <tr>
+                                <th>Timestamp</th>
+                                <th>License Plate</th>
+                                <th>Status</th>
+                                <th>Camera</th>
+                                <th>Confidence</th>
+                                <th>Plate Image</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for detection in recent_detections %}
+                            <tr>
+                                <td>
+                                    <small class="text-muted">
+                                        {{ detection.Timestamp.split('.')[0] if detection.Timestamp else '-' }}
+                                    </small>
+                                </td>
+                                <td>
+                                    <span class="fw-bold">{{ detection.License_Plate or '-' }}</span>
+                                </td>
+                                <td>
+                                    <span class="badge badge-modern badge-{{ 'success' if detection.Verification_Status == 'VERIFIED' else 'warning' }}">
+                                        {{ detection.Verification_Status or '-' }}
+                                    </span>
+                                </td>
+                                <td>
+                                    <small>{{ detection.Camera_Source or '-' }}</small>
+                                </td>
+                                <td>
+                                    <span class="badge badge-modern badge-info">
+                                        {{ "%.1f"|format(detection.Detection_Confidence|float) if detection.Detection_Confidence else '-' }}%
+                                    </span>
+                                </td>
+                                <td>
+                                    {% set ann = detection['Image_Full_Annotated'] if 'Image_Full_Annotated' in detection else None %}
+                                    {% set x1 = detection['bbox_x1'] if 'bbox_x1' in detection else None %}
+                                    {% set y1 = detection['bbox_y1'] if 'bbox_y1' in detection else None %}
+                                    {% set x2 = detection['bbox_x2'] if 'bbox_x2' in detection else None %}
+                                    {% set y2 = detection['bbox_y2'] if 'bbox_y2' in detection else None %}
+                                    
+                                    {% if ann and x1 is not none and y1 is not none %}
+                                    <div class="dynamic-crop-container shadow-sm" data-src="{{ ann }}" data-x1="{{ x1 }}" data-y1="{{ y1 }}" data-x2="{{ x2 }}" data-y2="{{ y2 }}" style="width:70px;height:40px;border-radius:6px;overflow:hidden;position:relative;cursor:pointer;background:#f0f0f0;" onclick="showImagePreview('{{ ann }}', 'Annotated Frame')" title="Click to view full frame">
+                                        <img src="{{ ann }}" style="position:absolute;visibility:hidden;">
+                                    </div>
+                                    {% elif ann %}
+                                    <img src="{{ ann }}" alt="Annotated" style="width:70px;height:40px;object-fit:cover;border-radius:6px;cursor:pointer;" onclick="showImagePreview('{{ ann }}', 'Annotated Frame')">
+                                    {% else %}
+                                    <i class="bi bi-image text-muted"></i>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="text-center py-4">
+                    <i class="bi bi-inbox display-4 text-muted"></i>
+                    <p class="text-muted mt-2">No recent detections found</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Dashboard-specific JavaScript
+function showImagePreview(imageUrl, title) {
+    // Lightbox overlay with blur & single-click close
+    const overlay = document.createElement('div');
+    overlay.className = 'lightbox-overlay';
+    overlay.innerHTML = `<img src="${imageUrl}" alt="${title}">`;
+    overlay.addEventListener('click', () => overlay.remove());
+    document.body.appendChild(overlay);
+}
+
+function processDynamicCrops() {
+    const containers = document.querySelectorAll('.dynamic-crop-container:not(.processed)');
+    containers.forEach(container => {
+        container.classList.add('processed');
+        const img = container.querySelector('img');
+        const src = container.getAttribute('data-src');
+        const x1 = parseFloat(container.getAttribute('data-x1'));
+        const y1 = parseFloat(container.getAttribute('data-y1'));
+        const x2 = parseFloat(container.getAttribute('data-x2'));
+        const y2 = parseFloat(container.getAttribute('data-y2'));
+        
+        if (isNaN(x1) || isNaN(y1) || isNaN(x2) || isNaN(y2)) return;
+
+        const cw = container.clientWidth || 70;
+        const ch = container.clientHeight || 40;
+        
+        const tempImg = new Image();
+        tempImg.onload = function() {
+            const w = x2 - x1;
+            const h = y2 - y1;
+            const padX = w * 0.2;
+            const padY = h * 0.2;
+            
+            const cropX = Math.max(0, x1 - padX);
+            const cropY = Math.max(0, y1 - padY);
+            const cropW = Math.min(tempImg.width - cropX, w + padX * 2);
+            const cropH = Math.min(tempImg.height - cropY, h + padY * 2);
+            
+            const scale = Math.max(cw / cropW, ch / cropH);
+            
+            const displayW = cropW * scale;
+            const displayH = cropH * scale;
+            const offsetX = (cw - displayW) / 2;
+            const offsetY = (ch - displayH) / 2;
+            
+            img.style.width = `${tempImg.width * scale}px`;
+            img.style.height = `${tempImg.height * scale}px`;
+            img.style.left = `${offsetX - (cropX * scale)}px`;
+            img.style.top = `${offsetY - (cropY * scale)}px`;
+            img.style.visibility = 'visible';
+        };
+        tempImg.src = src;
+    });
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    processDynamicCrops();
+});
+</script>
+{% endblock %}

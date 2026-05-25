@@ -1,0 +1,41 @@
+# Core ML and Computer Vision
+torch>=1.9.0
+ultralytics>=8.0.0
+opencv-python>=4.5.0
+numpy>=1.21.0
+
+# OCR and Text Processing
+paddlepaddle==2.6.2
+paddleocr==2.8.1
+
+# Web and API
+requests>=2.25.0
+aiohttp>=3.8.0
+python-socketio>=5.0.0
+
+# Database
+mysql-connector-python
+reportlab
+Pillow>=8.0.0
+
+# Optional UI (for gradio interface if needed)
+gradio>=3.0.0
+
+# Additional dependencies for multi-camera and headless mode
+# (These are usually included with Python standard library)
+# - json (built-in)
+# - threading (built-in)
+# - queue (built-in)
+# - logging (built-in)
+# - os (built-in)
+# - sys (built-in)
+# - signal (built-in)
+# - time (built-in)
+# - datetime (built-in)
+# - csv (built-in)
+# - re (built-in)
+# - argparse (built-in)
+# - subprocess (built-in)
+# - concurrent.futures (built-in)
+# - urllib.parse (built-in)
+# - typing (built-in)

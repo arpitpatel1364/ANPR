@@ -1,0 +1,357 @@
+{% extends "base.html" %}
+
+{% block title %}Plate Management - ANPR Admin{% endblock %}
+
+{% block page_title %}Plate Management{% endblock %}
+{% block page_subtitle %}Manage allowed license plates for your ANPR system{% endblock %}
+
+{% block content %}
+<!-- Action Bar -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="action-bar">
+            <div class="d-flex justify-content-start align-items-center">
+                <div class="action-content">
+                    <button class="btn btn-primary btn-modern btn-modern-enhanced" data-bs-toggle="modal" data-bs-target="#addPlateModal">
+                        <i class="bi bi-plus-circle me-2"></i>Add Plate
+                    </button>
+                    <button class="btn btn-outline-primary btn-modern btn-modern-enhanced ms-2" data-bs-toggle="modal" data-bs-target="#bulkAddModal">
+                        <i class="bi bi-upload me-2"></i>Bulk Add
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Statistics Cards -->
+<div class="row mb-5">
+    <div class="col-xl-4 col-md-6 mb-4">
+        <div class="card stats-card-modern card-modern-enhanced">
+            <div class="card-body">
+                <div class="stats-header">
+                    <div class="stats-icon-modern bg-primary-gradient">
+                        <i class="bi bi-credit-card"></i>
+                    </div>
+                    <div class="stats-trend positive">
+                        <i class="bi bi-arrow-up"></i>
+                        <span>+{{ total_count }}</span>
+                    </div>
+                </div>
+                <div class="stats-content">
+                    <h6 class="stats-label">Total Plates</h6>
+                    <h2 class="stats-value">{{ total_count }}</h2>
+                    <p class="stats-description">All registered plates</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-xl-4 col-md-6 mb-4">
+        <div class="card stats-card-modern card-modern-enhanced">
+            <div class="card-body">
+                <div class="stats-header">
+                    <div class="stats-icon-modern bg-success-gradient">
+                        <i class="bi bi-check-circle"></i>
+                    </div>
+                    <div class="stats-trend positive">
+                        <i class="bi bi-arrow-up"></i>
+                        <span>+{{ plates|length }}</span>
+                    </div>
+                </div>
+                <div class="stats-content">
+                    <h6 class="stats-label">Unique Plates</h6>
+                    <h2 class="stats-value" id="unique-count">{{ plates|length }}</h2>
+                    <p class="stats-description">Distinct plate numbers</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-xl-4 col-md-6 mb-4">
+        <div class="card stats-card-modern card-modern-enhanced">
+            <div class="card-body">
+                <div class="stats-header">
+                    <div class="stats-icon-modern bg-warning-gradient">
+                        <i class="bi bi-exclamation-triangle"></i>
+                    </div>
+                    <div class="stats-trend negative">
+                        <i class="bi bi-arrow-down"></i>
+                        <span>{{ total_count - plates|length }}</span>
+                    </div>
+                </div>
+                <div class="stats-content">
+                    <h6 class="stats-label">Duplicates</h6>
+                    <h2 class="stats-value" id="duplicate-count">{{ total_count - plates|length }}</h2>
+                    <p class="stats-description">Duplicate entries</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Search and Filter -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="search-container">
+            <div class="search-header">
+                <h6 class="search-title">
+                    <i class="bi bi-search me-2"></i>Search & Filter
+                </h6>
+            </div>
+            <div class="search-content">
+                <div class="search-input-group">
+                    <div class="search-field">
+                        <input type="text" class="search-input" id="searchInput" placeholder="Search plates by number...">
+                        <button class="search-btn" onclick="performSearch()">
+                            <i class="bi bi-search"></i>
+                        </button>
+                    </div>
+                    <div class="search-actions">
+                        <button class="action-btn clear-btn" onclick="clearSearch()">
+                            <i class="bi bi-x-circle me-1"></i>Clear
+                        </button>
+                        <button class="action-btn danger-btn" onclick="removeDuplicates()">
+                            <i class="bi bi-trash me-1"></i>Remove Duplicates
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Plates Table -->
+<div class="row">
+    <div class="col-12">
+        <div class="card card-modern-enhanced">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="bi bi-list-ul me-2"></i>Allowed Plates
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-modern table-hover" id="platesTable">
+                        <thead>
+                            <tr>
+                                <th width="5%">#</th>
+                                <th width="20%">License Plate</th>
+                                <th width="15%">State Code</th>
+                                <th width="15%">District</th>
+                                <th width="15%">Series</th>
+                                <th width="15%">Number</th>
+                                <th width="15%">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for plate in plates %}
+                            <tr>
+                                <td>{{ loop.index }}</td>
+                                <td>
+                                    <span class="fw-bold text-primary">{{ plate }}</span>
+                                </td>
+                                <td>
+                                    <span class="badge badge-modern bg-info-gradient">{{ plate[:2] if plate|length >= 2 else '-' }}</span>
+                                </td>
+                                <td>
+                                    <span class="badge badge-modern bg-primary-gradient">{{ plate[2:4] if plate|length >= 4 else '-' }}</span>
+                                </td>
+                                <td>
+                                    <span class="badge badge-modern bg-warning-gradient">{{ plate[4:6] if plate|length >= 6 else '-' }}</span>
+                                </td>
+                                <td>
+                                    <span class="badge badge-modern bg-success-gradient">{{ plate[6:] if plate|length > 6 else '-' }}</span>
+                                </td>
+                                <td>
+                                    <div class="btn-group btn-group-sm">
+                                        <button class="btn btn-outline-primary btn-modern btn-modern-enhanced" onclick="editPlate('{{ plate }}')" title="Edit Plate">
+                                            <i class="bi bi-pencil"></i>
+                                        </button>
+                                        <button class="btn btn-outline-danger btn-modern btn-modern-enhanced" onclick="deletePlate('{{ plate }}')" title="Delete Plate">
+                                            <i class="bi bi-trash"></i>
+                                        </button>
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                
+                {% if not plates %}
+                <div class="text-center py-5">
+                    <i class="bi bi-inbox display-4 text-muted"></i>
+                    <p class="text-muted mt-3">No plates found. Add your first plate to get started.</p>
+                    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addPlateModal">
+                        <i class="bi bi-plus-circle me-1"></i>Add First Plate
+                    </button>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Add Plate Modal -->
+<div class="modal fade" id="addPlateModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="bi bi-plus-circle me-2"></i>Add New Plate
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="POST" action="{{ url_for('plate.add_plate') }}">
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="plate" class="form-label">License Plate Number</label>
+                        <input type="text" class="form-control" id="plate" name="plate" 
+                               placeholder="e.g., GJ01AB1234" required maxlength="10" pattern="[A-Z]{2}[0-9]{2}[A-Z]{2}[0-9]{4}">
+                        <div class="form-text">Enter the complete license plate number (max 10 characters)</div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-check-circle me-1"></i>Add Plate
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Bulk Add Modal -->
+<div class="modal fade" id="bulkAddModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="bi bi-upload me-2"></i>Bulk Add Plates
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="POST" action="{{ url_for('plate.bulk_add_plates') }}">
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="plates_text" class="form-label">Plate Numbers</label>
+                        <textarea class="form-control" id="plates_text" name="plates_text" rows="8" 
+                                  placeholder="Enter plate numbers separated by commas, new lines, or semicolons&#10;e.g.,&#10;GJ01AB1234&#10;GJ01CD5678&#10;GJ01EF9012"></textarea>
+                        <div class="form-text">Enter multiple plate numbers separated by commas, new lines, or semicolons</div>
+                    </div>
+                    <div class="alert alert-info">
+                        <i class="bi bi-info-circle me-2"></i>
+                        <strong>Format examples:</strong><br>
+                        • One per line: GJ01AB1234<br>
+                        • Comma separated: GJ01AB1234, GJ01CD5678<br>
+                        • Semicolon separated: GJ01AB1234; GJ01CD5678
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-check-circle me-1"></i>Add Plates
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Delete Confirmation Modal -->
+<div class="modal fade" id="deleteModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="bi bi-exclamation-triangle me-2 text-warning"></i>Confirm Delete
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p>Are you sure you want to delete the plate <strong id="deletePlateNumber"></strong>?</p>
+                <div class="alert alert-warning">
+                    <i class="bi bi-exclamation-triangle me-2"></i>
+                    This action cannot be undone.
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <form method="POST" action="{{ url_for('plate.delete_plate') }}" style="display: inline;">
+                    <input type="hidden" name="plate" id="deletePlateInput">
+                    <button type="submit" class="btn btn-danger">
+                        <i class="bi bi-trash me-1"></i>Delete Plate
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Search functionality
+document.getElementById('searchInput').addEventListener('input', function() {
+    const searchTerm = this.value.toLowerCase();
+    const tableRows = document.querySelectorAll('#platesTable tbody tr');
+    
+    tableRows.forEach(row => {
+        const plateText = row.cells[1].textContent.toLowerCase();
+        if (plateText.includes(searchTerm)) {
+            row.style.display = '';
+        } else {
+            row.style.display = 'none';
+        }
+    });
+});
+
+// Clear search
+function clearSearch() {
+    document.getElementById('searchInput').value = '';
+    const tableRows = document.querySelectorAll('#platesTable tbody tr');
+    tableRows.forEach(row => {
+        row.style.display = '';
+    });
+}
+
+// Delete plate
+function deletePlate(plate) {
+    document.getElementById('deletePlateNumber').textContent = plate;
+    document.getElementById('deletePlateInput').value = plate;
+    new bootstrap.Modal(document.getElementById('deleteModal')).show();
+}
+
+// Edit plate (placeholder for future implementation)
+function editPlate(plate) {
+    alert('Edit functionality will be implemented in the next version.');
+}
+
+// Remove duplicates
+function removeDuplicates() {
+    if (confirm('This will remove all duplicate plates from the database. Continue?')) {
+        // This would need to be implemented as a backend endpoint
+        alert('Duplicate removal functionality will be implemented in the next version.');
+    }
+}
+
+// Auto-format plate input
+document.getElementById('plate').addEventListener('input', function() {
+    this.value = this.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+});
+
+// Auto-format bulk input
+document.getElementById('plates_text').addEventListener('input', function() {
+    // Convert to uppercase and clean
+    let lines = this.value.split('\n');
+    lines = lines.map(line => {
+        return line.split(/[,;]/).map(plate => 
+            plate.trim().toUpperCase().replace(/[^A-Z0-9]/g, '')
+        ).filter(plate => plate.length > 0);
+    });
+    this.value = lines.map(line => line.join(', ')).join('\n');
+});
+</script>
+{% endblock %}

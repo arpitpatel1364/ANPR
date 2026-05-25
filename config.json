@@ -1,0 +1,168 @@
+{
+  "system_mode": "multi_camera",
+  "database": {
+    "host": "localhost",
+    "port": 3306,
+    "user": "root",
+    "password": "",
+    "database": "anpr_system",
+    "pool_size": 5
+  },
+  "global_settings": {
+    "fps_limit": 30,
+    "frame_skip": 2,
+    "csv_file": "plate_detections.csv",
+    "allowed_plates": "allowed_plates.json",
+    "save_dir": "./detected_plates"
+  },
+  "display_settings": {
+    "headless_mode": false,
+    "show_fps": true,
+    "show_plate_count": true,
+    "show_verification_stats": true,
+    "window_title": "Multi-Camera ANPR System",
+    "grid_layout": "2x2",
+    "show_camera_names": true
+  },
+  "headless_settings": {
+    "enabled": false,
+    "log_level": "INFO",
+    "save_frames": false,
+    "frame_save_interval": 30,
+    "log_file": "anpr_headless.log",
+    "status_update_interval": 10
+  },
+  "cameras": [
+    {
+      "id": "Cam_001",
+      "name": "ANPR Enterance",
+      "location": "Main Gate",
+      "rtsp_source": "rtsp://anpr:bimbo7890@general.cactusxpo.com:17202/Streaming/Channels/2101",
+      "dedup_window": 50,
+      "confidence_threshold": 0.8,
+      "enabled": true,
+      "api_enabled": false,
+      "api_settings": {
+        "base_url": "",
+        "username": "admin",
+        "password": "Admin@123",
+        "modes": [
+          1,
+          2
+        ],
+        "timeout": 5,
+        "max_retries": 3
+      },
+      "roi_polygon": [
+        {
+          "x": 1094,
+          "y": 488
+        },
+        {
+          "x": 2508,
+          "y": 780
+        },
+        {
+          "x": 2035,
+          "y": 1695
+        },
+        {
+          "x": 621,
+          "y": 1153
+        },
+        {
+          "x": 608,
+          "y": 1146
+        }
+      ]
+    },
+    {
+      "id": "Cam_002",
+      "name": "ANPR Exit",
+      "location": "Main Gate",
+      "rtsp_source": "rtsp://anpr:bimbo7890@general.cactusxpo.com:17202/Streaming/Channels/2201",
+      "dedup_window": 50,
+      "confidence_threshold": 0.8,
+      "enabled": true,
+      "api_enabled": false,
+      "api_settings": {
+        "base_url": "",
+        "username": "admin",
+        "password": "Admin@123",
+        "modes": [
+          1,
+          2
+        ],
+        "timeout": 5,
+        "max_retries": 3
+      },
+      "roi_polygon": [
+        {
+          "x": 806,
+          "y": 751
+        },
+        {
+          "x": 1982,
+          "y": 720
+        },
+        {
+          "x": 2577,
+          "y": 861
+        },
+        {
+          "x": 2581,
+          "y": 1918
+        },
+        {
+          "x": 1878,
+          "y": 1924
+        }
+      ]
+    },
+    {
+      "id": "Webcam_001",
+      "name": "Local Webcam",
+      "location": "Office PC",
+      "rtsp_source": "1",
+      "dedup_window": 30,
+      "confidence_threshold": 0.75,
+      "enabled": true,
+      "api_enabled": false,
+      "api_settings": {
+        "base_url": "",
+        "username": "admin",
+        "password": "Admin@123",
+        "modes": [
+          1,
+          2
+        ],
+        "timeout": 5,
+        "max_retries": 3
+      },
+      "roi_polygon": [
+        {
+          "x": 11,
+          "y": 13
+        },
+        {
+          "x": 13,
+          "y": 460
+        },
+        {
+          "x": 620,
+          "y": 462
+        },
+        {
+          "x": 618,
+          "y": 17
+        }
+      ],
+      "roi": {
+        "x1": 11,
+        "y1": 13,
+        "x2": 621,
+        "y2": 463
+      }
+    }
+  ]
+}

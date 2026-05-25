@@ -1,0 +1,6 @@
+./static/images/*
+./static/images/detections/*
+./static/images/detections/full_raw/*
+./static/images/detections/full_annotated/*
+./static/images/detections/cropped/*
+./static/images/verified_plates/*
