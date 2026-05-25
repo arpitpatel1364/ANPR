@@ -4,7 +4,7 @@
     "host": "localhost",
     "port": 3306,
     "user": "root",
-    "password": "",
+    "password": "YOUR_DATABASE_PASSWORD_HERE",
     "database": "anpr_system",
     "pool_size": 5
   },
@@ -35,17 +35,17 @@
   "cameras": [
     {
       "id": "Cam_001",
-      "name": "ANPR Enterance",
+      "name": "ANPR Entrance",
       "location": "Main Gate",
-      "rtsp_source": "rtsp://anpr:bimbo7890@general.cactusxpo.com:17202/Streaming/Channels/2101",
+      "rtsp_source": "rtsp://username:password@your_camera_ip:port/stream_path",
       "dedup_window": 50,
       "confidence_threshold": 0.8,
       "enabled": true,
       "api_enabled": false,
       "api_settings": {
-        "base_url": "",
+        "base_url": "http://your_relay_api_ip/cgi-bin/configManager.cgi",
         "username": "admin",
-        "password": "Admin@123",
+        "password": "password123",
         "modes": [
           1,
           2
@@ -55,67 +55,20 @@
       },
       "roi_polygon": [
         {
-          "x": 1094,
-          "y": 488
+          "x": 100,
+          "y": 100
         },
         {
-          "x": 2508,
-          "y": 780
+          "x": 500,
+          "y": 100
         },
         {
-          "x": 2035,
-          "y": 1695
+          "x": 500,
+          "y": 500
         },
         {
-          "x": 621,
-          "y": 1153
-        },
-        {
-          "x": 608,
-          "y": 1146
-        }
-      ]
-    },
-    {
-      "id": "Cam_002",
-      "name": "ANPR Exit",
-      "location": "Main Gate",
-      "rtsp_source": "rtsp://anpr:bimbo7890@general.cactusxpo.com:17202/Streaming/Channels/2201",
-      "dedup_window": 50,
-      "confidence_threshold": 0.8,
-      "enabled": true,
-      "api_enabled": false,
-      "api_settings": {
-        "base_url": "",
-        "username": "admin",
-        "password": "Admin@123",
-        "modes": [
-          1,
-          2
-        ],
-        "timeout": 5,
-        "max_retries": 3
-      },
-      "roi_polygon": [
-        {
-          "x": 806,
-          "y": 751
-        },
-        {
-          "x": 1982,
-          "y": 720
-        },
-        {
-          "x": 2577,
-          "y": 861
-        },
-        {
-          "x": 2581,
-          "y": 1918
-        },
-        {
-          "x": 1878,
-          "y": 1924
+          "x": 100,
+          "y": 500
         }
       ]
     },
@@ -131,7 +84,7 @@
       "api_settings": {
         "base_url": "",
         "username": "admin",
-        "password": "Admin@123",
+        "password": "password123",
         "modes": [
           1,
           2
@@ -139,29 +92,11 @@
         "timeout": 5,
         "max_retries": 3
       },
-      "roi_polygon": [
-        {
-          "x": 11,
-          "y": 13
-        },
-        {
-          "x": 13,
-          "y": 460
-        },
-        {
-          "x": 620,
-          "y": 462
-        },
-        {
-          "x": 618,
-          "y": 17
-        }
-      ],
       "roi": {
-        "x1": 11,
-        "y1": 13,
-        "x2": 621,
-        "y2": 463
+        "x1": 10,
+        "y1": 10,
+        "x2": 600,
+        "y2": 450
       }
     }
   ]
