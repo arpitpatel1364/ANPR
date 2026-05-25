@@ -114,14 +114,21 @@ model = YOLO(model_path)
 model.to('cpu')
 print("✅ YOLO model loaded on CPU (GPU compatibility issue detected)")
 
-# Initialize PaddleOCR (GPU support may be limited in this version)
+# ============================================================================
+# CHANGE 1: Update PaddleOCR initialization block
+# ============================================================================
+# Initialize PaddleOCR with optimized parameters for CPU
 # Before we instantiate the OCR engine we check the downloaded model
 # archive for corruption.  If a partial download remains from a previous
 # run the tarfile module will raise "unexpected end of data", which is
 # what caused the service to crash earlier.  The helper below validates
 # the file and removes the containing directory if it's broken, forcing
 # PaddleOCR to re-download a fresh copy.
+
 import tarfile, shutil
+
+# Define model directory for optimized OCR model
+MODEL_DIR = os.path.expanduser("~/.paddleocr/whl/rec/en/en_PP-OCRv4_rec_infer")
 
 def _cleanup_broken_paddle_archive():
     rec_dir = os.path.expanduser(
@@ -145,13 +152,34 @@ _cleanup_broken_paddle_archive()
 # attempt initialization, retrying once after cleanup if necessary
 ocr = None
 try:
-    # Force CPU to avoid CUDA kernel compatibility issues
-    ocr = PaddleOCR(use_angle_cls=True, lang="en", use_gpu=False)
+    # Initialize with optimized parameters for recognition-only mode
+    ocr = PaddleOCR(
+        use_angle_cls=False,
+        det=False,
+        rec=True,
+        cls=False,
+        lang="en",
+        use_gpu=False,
+        rec_batch_num=6,
+        rec_model_dir=MODEL_DIR,
+        rec_image_shape="3, 32, 320"
+    )
 except tarfile.ReadError:
     _cleanup_broken_paddle_archive()
-    ocr = PaddleOCR(use_angle_cls=True, lang="en", use_gpu=False)
+    # Retry with same optimized parameters
+    ocr = PaddleOCR(
+        use_angle_cls=False,
+        det=False,
+        rec=True,
+        cls=False,
+        lang="en",
+        use_gpu=False,
+        rec_batch_num=6,
+        rec_model_dir=MODEL_DIR,
+        rec_image_shape="3, 32, 320"
+    )
 
-print("✅ PaddleOCR initialized on CPU (GPU compatibility issue detected)")
+print("✅ PaddleOCR initialized on CPU with optimized recognition-only model")
 
 # Define confusion mapping for common OCR errors
 # digits that look like letters (and vice versa)
@@ -212,6 +240,12 @@ websocket_client = None
 
 # Dictionary-based cameras for O(1) lookup and easy hot reload
 cameras_dict = {}  # {camera_id: CameraProcessor}
+
+# ============================================================================
+# CHANGE 5: Add per-camera throttle at module level
+# ============================================================================
+_last_processed_time = {}
+MIN_PROCESS_INTERVAL = 0.08
 
 
 class CameraProcessor:
@@ -299,6 +333,12 @@ class CameraProcessor:
         self.roi_snapshot_dir = os.path.join(os.path.dirname(__file__), 'admin_panel', 'static', 'images', 'roi_snapshots')
         self.save_frames = self.headless_settings.get('save_frames', False)
 
+        # ============================================================================
+        # CHANGE 2: Add CLAHE and sharpen kernel cache in CameraProcessor.__init__
+        # ============================================================================
+        self._clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(4, 4))
+        self._sharpen_kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
+
     def is_valid_indian_plate(self, plate_text):
         """Validate if detected plate matches Indian number plate format"""
         if not plate_text or plate_text == "No license plate detected":
@@ -326,6 +366,26 @@ class CameraProcessor:
     def update_verified_plate_cooldown(self, plate_text: str):
         """Update the last logged time for a verified plate"""
         self.verified_plate_cooldowns[plate_text] = time.time()
+
+    # ============================================================================
+    # CHANGE 3: Add preprocess_plate_crop method to CameraProcessor class
+    # ============================================================================
+    def preprocess_plate_crop(self, crop):
+        """Preprocess plate crop with CLAHE and sharpening for better OCR"""
+        try:
+            h, w = crop.shape[:2]
+            target_h = 48
+            if h != target_h:
+                scale = target_h / h
+                new_w = max(int(w * scale), 80)
+                crop = cv2.resize(crop, (new_w, target_h), 
+                                  interpolation=cv2.INTER_CUBIC)
+            gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+            enhanced = self._clahe.apply(gray)
+            sharpened = cv2.filter2D(enhanced, -1, self._sharpen_kernel)
+            return cv2.cvtColor(sharpened, cv2.COLOR_GRAY2BGR)
+        except Exception:
+            return crop
 
     def extract_license_plate(self, ocr_result, confidence_threshold=0.5, size_threshold_factor=0.5):
         """Extract and clean text from OCR output with HMM correction"""
@@ -476,6 +536,52 @@ class CameraProcessor:
                 best_overall_sequence = "".join(best_sequence)
 
         return best_overall_sequence
+
+    # ============================================================================
+    # CHANGE 6: Add convert_ocr_format method to CameraProcessor class
+    # ============================================================================
+    def convert_ocr_format(self, ocr_result_raw):
+        """Convert new OCR model format to old format"""
+        ocr_result = []
+        if not ocr_result_raw or not ocr_result_raw[0]:
+            return ocr_result
+        inner_list = []
+        for res in ocr_result_raw[0]:
+            text = None
+            conf = None
+            # Try different format possibilities
+            if isinstance(res, tuple):
+                if len(res) == 2:
+                    text, conf = res
+                elif len(res) == 1:
+                    if isinstance(res[0], tuple) and len(res[0]) == 2:
+                        text, conf = res[0]
+                    else:
+                        text = str(res[0])
+                        conf = 0.5
+                else:
+                    text = str(res[0]) if res else None
+                    conf = res[1] if len(res) > 1 else 0.5
+            elif isinstance(res, dict):
+                text = res.get('text')
+                conf = res.get('confidence')
+            else:
+                text = str(res)
+                conf = 0.5
+            # Normalize confidence to 0-1
+            if conf is not None:
+                conf = float(conf)
+                if conf > 1.0:
+                    conf = conf / 100.0
+            else:
+                conf = 0.5
+            # Add to result
+            if text:
+                dummy_box = [[0, 0], [100, 0], [100, 50], [0, 50]]
+                inner_list.append([dummy_box, (str(text), conf)])
+        if inner_list:
+            ocr_result.append(inner_list)
+        return ocr_result
 
     def make_api_call(self, plate_text, verification_status):
         """Make API calls for this specific camera"""
@@ -685,7 +791,12 @@ class CameraProcessor:
 
                     ocr_result = None
                     try:
-                        ocr_result = ocr.ocr(cropped_plate, cls=True)
+                        # ============================================================================
+                        # CHANGE 4: Update the OCR call inside process_frame method
+                        # ============================================================================
+                        preprocessed = self.preprocess_plate_crop(cropped_plate)
+                        ocr_result_raw = ocr.ocr(preprocessed, det=False, rec=True, cls=False)
+                        ocr_result = self.convert_ocr_format(ocr_result_raw)
                     except Exception as ocr_error:
                         error_msg = str(ocr_error)
                         if "Tensor holds no memory" in error_msg or "PreconditionNotMetError" in error_msg:
@@ -1370,6 +1481,16 @@ def global_frame_processor():
             camera_id = frame_data['camera_id']
             camera_processor = frame_data['camera_processor']
             frame_number = frame_data['frame_number']
+
+            # ============================================================================
+            # CHANGE 5: Add per-camera throttle in global_frame_processor function
+            # ============================================================================
+            now = time.time()
+            last_t = _last_processed_time.get(camera_id, 0)
+            if now - last_t < MIN_PROCESS_INTERVAL:
+                frame_data['camera_processor'].current_processed_frame = frame_data['frame']
+                continue
+            _last_processed_time[camera_id] = now
 
             # Process every Nth frame to limit FPS (configurable via frame_skip).
             if PROCESS_EVERY_NTH_FRAME > 1 and frame_number % PROCESS_EVERY_NTH_FRAME != 0:
