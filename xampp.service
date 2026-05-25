@@ -1,0 +1,13 @@
+[Unit]
+Description=XAMPP
+After=network.target
+
+[Service]
+Type=forking
+ExecStart=/opt/lampp/lampp start
+ExecStop=/opt/lampp/lampp stop
+ExecReload=/opt/lampp/lampp restart
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

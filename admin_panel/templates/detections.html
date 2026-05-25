@@ -1,0 +1,761 @@
+{% extends "base.html" %}
+
+{% block title %}Detection History - ANPR Admin{% endblock %}
+
+{% block page_title %}Detection History{% endblock %}
+{% block page_subtitle %}View and analyze all license plate detections{% endblock %}
+
+{% block content %}
+<style>
+.zoom-container {
+    overflow: hidden;
+    position: relative;
+    width: 100%;
+    height: 450px;
+    background: #e9ecef;
+    border-radius: 8px;
+    cursor: grab;
+}
+.zoom-container:active {
+    cursor: grabbing;
+}
+.zoom-image {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    transition: transform 0.1s ease-out;
+}
+</style>
+<!-- Action Bar -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="action-bar">
+            <div class="d-flex justify-content-start align-items-center">
+                <div class="action-content">
+                    <button class="btn btn-primary btn-modern btn-modern-enhanced" onclick="refreshDetections()">
+                        <i class="bi bi-arrow-clockwise me-2"></i>Refresh
+                    </button>
+                    <div class="btn-group ms-2">
+                        <button class="btn btn-outline-success btn-modern btn-modern-enhanced" onclick="exportDetections('csv')">
+                            <i class="bi bi-file-earmark-spreadsheet me-2"></i>Export CSV
+                        </button>
+                        <button type="button" class="btn btn-outline-success btn-modern btn-modern-enhanced dropdown-toggle dropdown-toggle-split" data-bs-toggle="dropdown" aria-expanded="false">
+                            <span class="visually-hidden">Toggle Dropdown</span>
+                        </button>
+                        <ul class="dropdown-menu">
+                            <li><a class="dropdown-item" href="#" onclick="exportDetections('pdf'); return false;">
+                                <i class="bi bi-file-earmark-pdf me-2"></i>Export PDF (with images)
+                            </a></li>
+                            <li><a class="dropdown-item" href="#" onclick="exportDetections('pdf_no_images'); return false;">
+                                <i class="bi bi-file-earmark-pdf me-2"></i>Export PDF (no images)
+                            </a></li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Statistics Cards -->
+<div class="row mb-5">
+    <div class="col-xl-3 col-md-6 mb-4">
+        <div class="card stats-card-modern card-modern-enhanced">
+            <div class="card-body">
+                <div class="stats-header">
+                    <div class="stats-icon-modern bg-primary-gradient">
+                        <i class="bi bi-list-ul"></i>
+                    </div>
+                    <div class="stats-trend positive">
+                        <i class="bi bi-arrow-up"></i>
+                        <span>+{{ total_detections }}</span>
+                    </div>
+                </div>
+                <div class="stats-content">
+                    <h6 class="stats-label">Total Detections</h6>
+                    <h2 class="stats-value">{{ total_detections }}</h2>
+                    <p class="stats-description">All time detections</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-xl-3 col-md-6 mb-4">
+        <div class="card stats-card-modern card-modern-enhanced">
+            <div class="card-body">
+                <div class="stats-header">
+                    <div class="stats-icon-modern bg-success-gradient">
+                        <i class="bi bi-check-circle"></i>
+                    </div>
+                    <div class="stats-trend positive">
+                        <i class="bi bi-arrow-up"></i>
+                        <span id="verified-count">+{{ verified_detections }}</span>
+                    </div>
+                </div>
+                <div class="stats-content">
+                    <h6 class="stats-label">Verified</h6>
+                    <h2 class="stats-value" id="verified-count-value">{{ verified_detections }}</h2>
+                    <p class="stats-description">Successfully verified</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-xl-3 col-md-6 mb-4">
+        <div class="card stats-card-modern card-modern-enhanced">
+            <div class="card-body">
+                <div class="stats-header">
+                    <div class="stats-icon-modern bg-warning-gradient">
+                        <i class="bi bi-exclamation-triangle"></i>
+                    </div>
+                    <div class="stats-trend negative">
+                        <i class="bi bi-arrow-down"></i>
+                        <span id="unverified-count">{{ unverified_detections }}</span>
+                    </div>
+                </div>
+                <div class="stats-content">
+                    <h6 class="stats-label">Unverified</h6>
+                    <h2 class="stats-value" id="unverified-count-value">{{ unverified_detections }}</h2>
+                    <p class="stats-description">Requires verification</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-xl-3 col-md-6 mb-4">
+        <div class="card stats-card-modern card-modern-enhanced">
+            <div class="card-body">
+                <div class="stats-header">
+                    <div class="stats-icon-modern bg-info-gradient">
+                        <i class="bi bi-percent"></i>
+                    </div>
+                    <div class="stats-trend neutral">
+                        <i class="bi bi-dash"></i>
+                        <span id="verification-rate">{{ verification_rate }}%</span>
+                    </div>
+                </div>
+                <div class="stats-content">
+                    <h6 class="stats-label">Verification Rate</h6>
+                    <h2 class="stats-value" id="verification-rate-value">{{ verification_rate }}%</h2>
+                    <p class="stats-description">Success rate</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="filter-container">
+            <div class="filter-header">
+                <h6 class="filter-title">
+                    <i class="bi bi-funnel me-2"></i>Filter Detections
+                </h6>
+            </div>
+            <div class="filter-content">
+                <form id="filterForm" onsubmit="event.preventDefault(); applyFilters(1); return false;">
+                    <div class="filter-grid">
+                        <div class="filter-group">
+                            <label class="filter-label">Search Plate</label>
+                            <input type="text" class="filter-input" id="search" name="search" 
+                                   value="{{ search }}" placeholder="Enter plate number...">
+                        </div>
+                        <div class="filter-group">
+                            <label class="filter-label">Status</label>
+                            <select class="filter-select" id="status" name="status" onchange="applyFilters()">
+                                <option value="all" {{ 'selected' if status_filter == 'all' }}>All Status</option>
+                                <option value="VERIFIED" {{ 'selected' if status_filter == 'VERIFIED' or not status_filter }}>Verified</option>
+                                <option value="NOT_VERIFIED" {{ 'selected' if status_filter == 'NOT_VERIFIED' }}>Not Verified</option>
+                            </select>
+                        </div>
+                        <div class="filter-group">
+                            <label class="filter-label">Camera</label>
+                            <select class="filter-select" id="camera" name="camera">
+                                <option value="">All Cameras</option>
+                                {% for camera in cameras %}
+                                <option value="{{ camera }}" {{ 'selected' if camera_filter == camera }}>
+                                    {{ camera }}
+                                </option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="filter-group">
+                            <label class="filter-label">From Date</label>
+                            <input type="date" class="filter-input" id="date_from" name="date_from" 
+                                   value="{{ date_from }}">
+                        </div>
+                        <div class="filter-group">
+                            <label class="filter-label">To Date</label>
+                            <input type="date" class="filter-input" id="date_to" name="date_to" 
+                                   value="{{ date_to }}">
+                        </div>
+                        <div class="filter-actions">
+                            <button type="button" class="filter-btn primary" onclick="applyFilters(1)">
+                                <i class="bi bi-search me-1"></i>Search
+                            </button>
+                            <button type="button" class="filter-btn secondary" onclick="clearFilters()">
+                                <i class="bi bi-x-circle me-1"></i>Clear
+                            </button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Detections Table -->
+<div class="row">
+    <div class="col-12">
+        <div class="card card-modern-enhanced">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="card-title mb-0">
+                    <i class="bi bi-table me-2"></i>Detection Records
+                </h5>
+                <div class="d-flex align-items-center gap-2">
+                    <span class="text-muted small">Page {{ current_page }} of {{ total_pages }}</span>
+                    <select class="form-select form-select-sm form-control-modern" style="width: auto;" onchange="changePerPage(this.value)">
+                        <option value="10" {{ 'selected' if per_page == 10 }}>10 per page</option>
+                        <option value="20" {{ 'selected' if per_page == 20 }}>20 per page</option>
+                        <option value="50" {{ 'selected' if per_page == 50 }}>50 per page</option>
+                        <option value="100" {{ 'selected' if per_page == 100 }}>100 per page</option>
+                    </select>
+                </div>
+            </div>
+            <div class="card-body" id="detections-wrapper">
+                <div id="detections-content">
+                {% if detections %}
+                <div class="table-responsive">
+                    <table class="table table-modern table-hover">
+                        <thead>
+                            <tr>
+                                <th width="5%">#</th>
+                                <th width="12%">Timestamp</th>
+                                <th width="8%">Plate</th>
+                                <th width="15%">License Plate</th>
+                                <th width="10%">Status</th>
+                                <th width="10%">Access</th>
+                                <th width="10%">Confidence</th>
+                                <th width="12%">Camera</th>
+                                <th width="8%">Frame</th>
+                                <th width="10%">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for detection in detections %}
+                            <tr>
+                                <td>{{ loop.index + (current_page - 1) * per_page }}</td>
+                                <td>
+                                    <small class="text-muted">
+                                        {{ detection.Timestamp.split('.')[0] if detection.Timestamp else '-' }}
+                                    </small>
+                                </td>
+                                <td>
+                                    {% set ann = detection['Image_Full_Annotated'] %}
+                                    {% set x1 = detection['bbox_x1'] %}
+                                    {% set y1 = detection['bbox_y1'] %}
+                                    {% set x2 = detection['bbox_x2'] %}
+                                    {% set y2 = detection['bbox_y2'] %}
+                                    {% if ann and x1 is not none and y1 is not none %}
+                                    <div class="dynamic-crop-container shadow-sm" data-src="{{ ann }}" data-x1="{{ x1 }}" data-y1="{{ y1 }}" data-x2="{{ x2 }}" data-y2="{{ y2 }}" style="width:60px;height:35px;border-radius:4px;overflow:hidden;position:relative;background:#f0f0f0;cursor:pointer;" onclick="previewImage('{{ ann }}')" title="Click to view full image">
+                                        <img src="{{ ann }}" style="position:absolute;visibility:hidden;">
+                                    </div>
+                                    {% elif ann %}
+                                    <img src="{{ ann }}" alt="Annotated" style="width:60px;height:35px;object-fit:cover;border-radius:4px;cursor:pointer;" onclick="previewImage('{{ ann }}')">
+                                    {% else %}
+                                    <i class="bi bi-image text-muted"></i>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <span class="fw-bold text-primary">{{ detection.License_Plate or '-' }}</span>
+                                </td>
+                                <td>
+                                    <span class="badge badge-modern bg-{{ 'success' if detection.Verification_Status == 'VERIFIED' else 'warning' }}-gradient">
+                                        {{ detection.Verification_Status or '-' }}
+                                    </span>
+                                </td>
+                                <td>
+                                    <span class="badge badge-modern bg-{{ 'success' if detection.Access_Granted == 'YES' else 'danger' }}-gradient">
+                                        {{ detection.Access_Granted or 'NO' }}
+                                    </span>
+                                </td>
+                                <td>
+                                    <span class="badge badge-modern bg-info-gradient">
+                                        {{ "%.1f"|format(detection.Detection_Confidence|float) if detection.Detection_Confidence else '-' }}%
+                                    </span>
+                                </td>
+                                <td>
+                                    <small class="text-muted">{{ detection.Camera_Source or '-' }}</small>
+                                </td>
+                                <td>
+                                    <span class="badge badge-modern bg-primary-gradient">{{ detection.Frame_Number or 'N/A' }}</span>
+                                </td>
+                                <td>
+                                    <div class="btn-group btn-group-sm">
+                                        <button class="btn btn-outline-primary btn-modern btn-modern-enhanced" data-detection='{{ detection|tojson }}' onclick="viewDetailsFromButton(this)" title="View Details">
+                                            <i class="bi bi-eye"></i>
+                                        </button>
+                                        <button class="btn btn-outline-danger btn-modern btn-modern-enhanced" onclick="deleteDetection('{{ loop.index + (current_page - 1) * per_page }}')" title="Delete Detection">
+                                            <i class="bi bi-trash"></i>
+                                        </button>
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                
+                <!-- Pagination -->
+                {% if total_pages > 1 %}
+                <nav aria-label="Detection pagination">
+                    <ul class="pagination justify-content-center">
+                        <li class="page-item {{ 'disabled' if current_page == 1 }}">
+                            {% if current_page > 1 %}
+                            <a class="page-link" href="#" onclick="goToPage({{ current_page - 1 }}); return false;">
+                                <i class="bi bi-chevron-left"></i>
+                            </a>
+                            {% else %}
+                            <span class="page-link">
+                                <i class="bi bi-chevron-left"></i>
+                            </span>
+                            {% endif %}
+                        </li>
+                        
+                        {% for page_num in range(1, total_pages + 1) %}
+                            {% if page_num == current_page %}
+                            <li class="page-item active">
+                                <span class="page-link">{{ page_num }}</span>
+                            </li>
+                            {% elif page_num <= 3 or page_num > total_pages - 3 or (page_num >= current_page - 1 and page_num <= current_page + 1) %}
+                            <li class="page-item">
+                                <a class="page-link" href="#" onclick="goToPage({{ page_num }}); return false;">{{ page_num }}</a>
+                            </li>
+                            {% elif page_num == 4 and current_page > 5 %}
+                            <li class="page-item disabled">
+                                <span class="page-link">...</span>
+                            </li>
+                            {% elif page_num == total_pages - 3 and current_page < total_pages - 4 %}
+                            <li class="page-item disabled">
+                                <span class="page-link">...</span>
+                            </li>
+                            {% endif %}
+                        {% endfor %}
+                        
+                        <li class="page-item {{ 'disabled' if current_page == total_pages }}">
+                            {% if current_page < total_pages %}
+                            <a class="page-link" href="#" onclick="goToPage({{ current_page + 1 }}); return false;">
+                                <i class="bi bi-chevron-right"></i>
+                            </a>
+                            {% else %}
+                            <span class="page-link">
+                                <i class="bi bi-chevron-right"></i>
+                            </span>
+                            {% endif %}
+                        </li>
+                    </ul>
+                </nav>
+                {% endif %}
+                
+                {% else %}
+                <div class="text-center py-5">
+                    <i class="bi bi-inbox display-4 text-muted"></i>
+                    <p class="text-muted mt-3">No detections found matching your criteria.</p>
+                    <button class="btn btn-outline-primary" onclick="clearFilters()">
+                        <i class="bi bi-x-circle me-1"></i>Clear Filters
+                    </button>
+                </div>
+                {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Detection Details Modal -->
+<div class="modal fade" id="detailsModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="bi bi-info-circle me-2"></i>Detection Details
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="detailsContent">
+                <!-- Details will be loaded here -->
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Delete Confirmation Modal -->
+<div class="modal fade" id="deleteModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="bi bi-exclamation-triangle me-2 text-warning"></i>Confirm Delete
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p>Are you sure you want to delete this detection record?</p>
+                <div class="alert alert-warning">
+                    <i class="bi bi-exclamation-triangle me-2"></i>
+                    This action cannot be undone.
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <form method="POST" id="deleteForm" style="display: inline;">
+                    <button type="submit" class="btn btn-danger">
+                        <i class="bi bi-trash me-1"></i>Delete Record
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Load statistics
+function loadStats() {
+    fetch('/detections/stats')
+    .then(response => response.json())
+    .then(data => {
+        // Update trend indicators
+        document.getElementById('verified-count').textContent = '+' + (data.verified_detections || 0);
+        document.getElementById('unverified-count').textContent = data.unverified_detections || 0;
+        document.getElementById('verification-rate').textContent = (data.verification_rate || 0) + '%';
+        
+        // Update main values
+        document.getElementById('verified-count-value').textContent = data.verified_detections || 0;
+        document.getElementById('unverified-count-value').textContent = data.unverified_detections || 0;
+        document.getElementById('verification-rate-value').textContent = (data.verification_rate || 0) + '%';
+        
+        // Update total detections
+        document.getElementById('total-detections').textContent = data.total_detections || 0;
+    })
+    .catch(error => {
+        console.error('Error loading stats:', error);
+    });
+}
+
+// Refresh detections
+function refreshDetections() {
+    // Show loading state
+    const refreshBtn = document.querySelector('button[onclick="refreshDetections()"]');
+    const originalText = refreshBtn.innerHTML;
+    refreshBtn.innerHTML = '<i class="bi bi-hourglass-split me-2"></i>Refreshing...';
+    refreshBtn.disabled = true;
+    
+    // Use AJAX to refresh table without full page reload
+    applyFilters({{ current_page }}).then(() => {
+        refreshBtn.innerHTML = originalText;
+        refreshBtn.disabled = false;
+    }).catch(() => {
+        refreshBtn.innerHTML = originalText;
+        refreshBtn.disabled = false;
+    });
+}
+
+// Export detections
+function exportDetections(format = 'csv') {
+    const form = document.getElementById('filterForm');
+    const formData = new FormData(form);
+    const params = new URLSearchParams(formData);
+    
+    if (format === 'pdf') {
+        params.set('images', 'true');
+        window.open(`/detections/export/pdf?${params}`, '_blank');
+    } else if (format === 'pdf_no_images') {
+        params.set('images', 'false');
+        window.open(`/detections/export/pdf?${params}`, '_blank');
+    } else {
+        // CSV export
+        window.open(`/detections/export?${params}`, '_blank');
+    }
+}
+
+
+// Change per page
+function changePerPage(value) {
+    // Create a hidden input to track per_page if it doesn't exist
+    let perPageInput = document.querySelector('input[name="per_page"]');
+    if (!perPageInput) {
+        perPageInput = document.createElement('input');
+        perPageInput.type = 'hidden';
+        perPageInput.name = 'per_page';
+        document.getElementById('filterForm').appendChild(perPageInput);
+    }
+    perPageInput.value = value;
+    applyFilters(1);
+}
+
+// Status filter change handler - AJAX refresh
+function applyFilters(page = 1) {
+    const form = document.getElementById('filterForm');
+    const formData = new FormData(form);
+    formData.set('page', page);
+    const params = new URLSearchParams(formData);
+    
+    // Show loading state on detections content
+    const detectionsContent = document.getElementById('detections-content');
+    const detectionsWrapper = document.getElementById('detections-wrapper');
+    if (detectionsContent) {
+        detectionsContent.style.opacity = '0.6';
+        detectionsContent.style.pointerEvents = 'none';
+    }
+    
+    return fetch(`/detections?${params}`)
+        .then(response => response.text())
+        .then(html => {
+            // Extract just the detections-content div from the response
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(html, 'text/html');
+            const newContent = doc.querySelector('#detections-content');
+            
+            if (newContent && detectionsContent) {
+                // Replace only the table content, not the whole card-body
+                detectionsContent.innerHTML = newContent.innerHTML;
+                processDynamicCrops();
+            }
+        })
+        .catch(error => {
+            console.error('Error loading detections:', error);
+            alert('Error refreshing detections');
+        })
+        .finally(() => {
+            if (detectionsContent) {
+                detectionsContent.style.opacity = '1';
+                detectionsContent.style.pointerEvents = 'auto';
+            }
+        });
+}
+
+// Pagination via AJAX
+function goToPage(pageNum) {
+    applyFilters(pageNum);
+    window.scrollTo(0, 0);
+}
+
+// Clear filters - reset to default (verified detections)
+function clearFilters() {
+    document.getElementById('search').value = '';
+    document.getElementById('status').value = 'VERIFIED';  // Default to showing verified
+    document.getElementById('camera').value = '';
+    document.getElementById('date_from').value = '';
+    document.getElementById('date_to').value = '';
+    applyFilters(1);  // Use AJAX instead of form submit
+}
+
+// Image preview helper (reuses modal or opens in new tab)
+function previewImage(url) {
+    try {
+        // Lightbox overlay with blur, closes on first click
+        const overlay = document.createElement('div');
+        overlay.className = 'lightbox-overlay';
+        overlay.innerHTML = `<img src="${url}" alt="Preview">`;
+        overlay.addEventListener('click', () => {
+            overlay.remove();
+        });
+        document.body.appendChild(overlay);
+    } catch (e) {
+        window.open(url, '_blank');
+    }
+}
+
+// Global Zoom Variables
+let currentZoom = 1;
+let panX = 0;
+let panY = 0;
+let isPanning = false;
+let startX = 0;
+let startY = 0;
+let _zoomHandler = null;
+let _mouseDownHandler = null;
+let _mouseUpHandler = null;
+let _mouseMoveHandler = null;
+
+function zoomImageFunc(delta) {
+    currentZoom = Math.max(1, Math.min(currentZoom + delta, 5));
+    updateZoomTransform();
+}
+
+function resetZoom() {
+    currentZoom = 1;
+    panX = 0;
+    panY = 0;
+    updateZoomTransform();
+}
+
+function updateZoomTransform() {
+    const img = document.getElementById('zoomImage');
+    if (img) {
+        img.style.transform = `translate(${panX}px, ${panY}px) scale(${currentZoom})`;
+    }
+}
+
+function setupZoom() {
+    currentZoom = 1;
+    panX = 0;
+    panY = 0;
+    const container = document.getElementById('zoomContainer');
+    const img = document.getElementById('zoomImage');
+    if (!container || !img) return;
+
+    // Remove old listeners to prevent duplication
+    if (_mouseUpHandler) window.removeEventListener('mouseup', _mouseUpHandler);
+    if (_mouseMoveHandler) window.removeEventListener('mousemove', _mouseMoveHandler);
+
+    container.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        const delta = e.deltaY * -0.002;
+        zoomImageFunc(delta);
+    });
+
+    container.addEventListener('mousedown', (e) => {
+        if (e.target.closest('button')) return; // ignore clicks on buttons
+        isPanning = true;
+        startX = e.clientX - panX;
+        startY = e.clientY - panY;
+    });
+
+    _mouseUpHandler = () => {
+        isPanning = false;
+    };
+    window.addEventListener('mouseup', _mouseUpHandler);
+
+    _mouseMoveHandler = (e) => {
+        if (!isPanning) return;
+        e.preventDefault();
+        panX = e.clientX - startX;
+        panY = e.clientY - startY;
+        updateZoomTransform();
+    };
+    window.addEventListener('mousemove', _mouseMoveHandler, { passive: false });
+}
+
+// View details - build rich modal with zoomable image
+function viewDetails(d) {
+    const timestamp = d.Timestamp ? d.Timestamp.split('.')[0] : '-';
+    const ann = d.Image_Full_Annotated || '';
+    const statusBadge = d.Verification_Status === 'VERIFIED' ? 'bg-success-gradient' : 'bg-warning-gradient';
+    const accessBadge = d.Access_Granted === 'YES' ? 'bg-success-gradient' : 'bg-danger-gradient';
+
+    const imagesHtml = ann ? `
+        <div class="zoom-container" id="zoomContainer">
+            <img src="${ann}" alt="Annotated Frame" class="zoom-image" id="zoomImage" draggable="false">
+            <div style="position:absolute; bottom:15px; right:15px; background:rgba(255,255,255,0.9); padding:5px; border-radius:8px; z-index:10; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+                <button class="btn btn-sm btn-outline-secondary" onclick="zoomImageFunc(0.5)" title="Zoom In"><i class="bi bi-zoom-in"></i></button>
+                <button class="btn btn-sm btn-outline-secondary" onclick="zoomImageFunc(-0.5)" title="Zoom Out"><i class="bi bi-zoom-out"></i></button>
+                <button class="btn btn-sm btn-outline-secondary" onclick="resetZoom()" title="Reset View"><i class="bi bi-arrow-counterclockwise"></i></button>
+            </div>
+        </div>` : '<div class="alert alert-secondary text-center"><i class="bi bi-image text-muted fs-3 d-block mb-2"></i>No images available</div>';
+
+    document.getElementById('detailsContent').innerHTML = `
+        <div class="container-fluid py-2">
+            <div class="row mb-3 bg-light rounded p-3 mx-0">
+                <div class="col-md-6">
+                    <div class="mb-1"><span class="text-muted small">Plate Number:</span><br><strong><span class="text-primary fs-5">${d.License_Plate || '-'}</span></strong></div>
+                    <div class="mb-1"><span class="text-muted small">Timestamp:</span><br><strong>${timestamp}</strong></div>
+                    <div><span class="text-muted small">Camera:</span><br><strong>${d.Camera_Source || '-'}</strong></div>
+                </div>
+                <div class="col-md-6 border-start">
+                    <div class="mb-1"><span class="text-muted small">Status:</span><br><span class="badge badge-modern ${statusBadge}">${d.Verification_Status || '-'}</span></div>
+                    <div class="mb-1"><span class="text-muted small">Access:</span><br><span class="badge badge-modern ${accessBadge}">${d.Access_Granted || 'NO'}</span></div>
+                    <div><span class="text-muted small">Confidence:</span><br><span class="badge badge-modern bg-info-gradient">${d.Detection_Confidence ? parseFloat(d.Detection_Confidence).toFixed(1) + '%' : '-'}</span></div>
+                </div>
+            </div>
+            <h6 class="mb-3 text-muted"><i class="bi bi-image me-2"></i>Full Annotated Frame (Scroll to zoom, drag to pan)</h6>
+            ${imagesHtml}
+        </div>
+    `;
+    
+    new bootstrap.Modal(document.getElementById('detailsModal')).show();
+
+    if (ann) {
+        setupZoom();
+    }
+}
+
+// Safer handler to avoid inline object literal parsing issues
+function viewDetailsFromButton(btn) {
+    try {
+        const raw = btn.getAttribute('data-detection');
+        if (!raw) return;
+        const d = JSON.parse(raw);
+        viewDetails(d);
+    } catch (e) {
+        console.error('Failed to parse detection data', e);
+    }
+}
+
+// Delete detection
+function deleteDetection(index) {
+    document.getElementById('deleteForm').action = `/detections/delete/${index}`;
+    new bootstrap.Modal(document.getElementById('deleteModal')).show();
+}
+
+function processDynamicCrops() {
+    const containers = document.querySelectorAll('.dynamic-crop-container:not(.processed)');
+    containers.forEach(container => {
+        container.classList.add('processed');
+        const img = container.querySelector('img');
+        const src = container.getAttribute('data-src');
+        const x1 = parseFloat(container.getAttribute('data-x1'));
+        const y1 = parseFloat(container.getAttribute('data-y1'));
+        const x2 = parseFloat(container.getAttribute('data-x2'));
+        const y2 = parseFloat(container.getAttribute('data-y2'));
+        
+        if (isNaN(x1) || isNaN(y1) || isNaN(x2) || isNaN(y2)) return;
+
+        const cw = container.clientWidth || 60;
+        const ch = container.clientHeight || 35;
+        
+        const tempImg = new Image();
+        tempImg.onload = function() {
+            const w = x2 - x1;
+            const h = y2 - y1;
+            const padX = w * 0.2;
+            const padY = h * 0.2;
+            
+            const cropX = Math.max(0, x1 - padX);
+            const cropY = Math.max(0, y1 - padY);
+            const cropW = Math.min(tempImg.width - cropX, w + padX * 2);
+            const cropH = Math.min(tempImg.height - cropY, h + padY * 2);
+            
+            const scale = Math.max(cw / cropW, ch / cropH);
+            
+            const displayW = cropW * scale;
+            const displayH = cropH * scale;
+            const offsetX = (cw - displayW) / 2;
+            const offsetY = (ch - displayH) / 2;
+            
+            img.style.width = `${tempImg.width * scale}px`;
+            img.style.height = `${tempImg.height * scale}px`;
+            img.style.left = `${offsetX - (cropX * scale)}px`;
+            img.style.top = `${offsetY - (cropY * scale)}px`;
+            img.style.visibility = 'visible';
+        };
+        tempImg.src = src;
+    });
+}
+
+// Auto-refresh stats every 30 seconds
+setInterval(loadStats, 30000);
+
+// Initial load
+document.addEventListener('DOMContentLoaded', function() {
+    loadStats();
+    processDynamicCrops();
+});
+</script>
+{% endblock %}

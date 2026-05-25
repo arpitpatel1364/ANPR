@@ -1,0 +1,72 @@
+# Python bytecode/cache
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+
+# Python environments
+.venv/
+venv/
+env/
+ENV/
+anpr_env/
+.Python
+
+# Build artifacts
+*.so
+*.egg-info/
+dist/
+build/
+
+# Logs/runtime outputs
+*.log
+logs/
+anpr_service.log
+anpr_headless.log
+setup_test.log
+
+# Local databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Local/sensitive config variants
+config.json.local
+config.json.production
+*.key
+*.pem
+
+# IDE/editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS junk
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Generated detection images and verified plate images
+admin_panel/static/images/detections/**
+admin_panel/static/images/verified_plates/**
+static/images/verified_plates/**
+
+# Keep logo assets
+!admin_panel/static/images/powered-by-logo.png
+!powered-by-logo.png
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.backup
+
+# Runtime/exported data files
+plate_detections.csv
+
+# Local service overrides
+*.service.local
+
+*.log
