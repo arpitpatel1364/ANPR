@@ -115,7 +115,7 @@ model.to('cpu')
 print("✅ YOLO model loaded on CPU (GPU compatibility issue detected)")
 
 # ============================================================================
-# CHANGE 1: Update PaddleOCR initialization block
+#  PaddleOCR initialization block
 # ============================================================================
 # Initialize PaddleOCR with optimized parameters for CPU
 # Before we instantiate the OCR engine we check the downloaded model
@@ -242,7 +242,7 @@ websocket_client = None
 cameras_dict = {}  # {camera_id: CameraProcessor}
 
 # ============================================================================
-# CHANGE 5: Add per-camera throttle at module level
+# per-camera throttle at module level
 # ============================================================================
 _last_processed_time = {}
 MIN_PROCESS_INTERVAL = 0.08
@@ -334,7 +334,7 @@ class CameraProcessor:
         self.save_frames = self.headless_settings.get('save_frames', False)
 
         # ============================================================================
-        # CHANGE 2: Add CLAHE and sharpen kernel cache in CameraProcessor.__init__
+        # CLAHE and sharpen kernel cache in CameraProcessor.__init__
         # ============================================================================
         self._clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(4, 4))
         self._sharpen_kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
@@ -368,7 +368,7 @@ class CameraProcessor:
         self.verified_plate_cooldowns[plate_text] = time.time()
 
     # ============================================================================
-    # CHANGE 3: Add preprocess_plate_crop method to CameraProcessor class
+    # preprocess_plate_crop method to CameraProcessor class
     # ============================================================================
     def preprocess_plate_crop(self, crop):
         """Preprocess plate crop with CLAHE and sharpening for better OCR"""
@@ -538,7 +538,7 @@ class CameraProcessor:
         return best_overall_sequence
 
     # ============================================================================
-    # CHANGE 6: Add convert_ocr_format method to CameraProcessor class
+    # convert_ocr_format method to CameraProcessor class
     # ============================================================================
     def convert_ocr_format(self, ocr_result_raw):
         """Convert new OCR model format to old format"""
@@ -792,7 +792,7 @@ class CameraProcessor:
                     ocr_result = None
                     try:
                         # ============================================================================
-                        # CHANGE 4: Update the OCR call inside process_frame method
+                        # the OCR call inside process_frame method
                         # ============================================================================
                         preprocessed = self.preprocess_plate_crop(cropped_plate)
                         ocr_result_raw = ocr.ocr(preprocessed, det=False, rec=True, cls=False)
@@ -1483,7 +1483,7 @@ def global_frame_processor():
             frame_number = frame_data['frame_number']
 
             # ============================================================================
-            # CHANGE 5: Add per-camera throttle in global_frame_processor function
+            # per-camera throttle in global_frame_processor function
             # ============================================================================
             now = time.time()
             last_t = _last_processed_time.get(camera_id, 0)
