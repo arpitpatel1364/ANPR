@@ -31,7 +31,7 @@ if [ ! -d "$SERVICE_DIR" ]; then
 fi
 
 # Check if required files exist
-REQUIRED_FILES=("app_multi_camera.py" "plate_logger.py" "config.json" "ANPR_ver15.pt" "start_anpr_service.sh")
+REQUIRED_FILES=("app_multi_camera_lprnet.py" "plate_logger.py" "config.json" "ANPR_ver15.pt" "start_anpr_service.sh")
 for file in "${REQUIRED_FILES[@]}"; do
     if [ ! -f "$SERVICE_DIR/$file" ]; then
         echo "❌ Required file not found: $file"

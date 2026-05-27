@@ -152,7 +152,7 @@ Type=simple
 User=anpr
 WorkingDirectory=/opt/anpr-system
 Environment="PATH=/opt/anpr-system/venv/bin"
-ExecStart=/opt/anpr-system/venv/bin/python /opt/anpr-system/app_multi_camera.py
+ExecStart=/opt/anpr-system/venv/bin/python /opt/anpr-system/app_multi_camera_lprnet.py
 Restart=always
 RestartSec=10
 StandardOutput=journal

@@ -73,7 +73,7 @@ This will:
 
 1. Start the ANPR service:
    ```bash
-   python app_multi_camera.py
+   python app_multi_camera_lprnet.py
    ```
 
 2. Start the admin panel:

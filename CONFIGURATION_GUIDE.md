@@ -78,7 +78,7 @@ Camera configuration remains in `config.json` because:
 1. **Complex nested structures**: ROI polygons, API settings, etc.
 2. **Easy editing**: JSON is human-readable and easy to modify
 3. **No frequent changes**: Camera config doesn't change as often as detections
-4. **Compatibility**: `app_multi_camera.py` reads directly from JSON
+4. **Compatibility**: `app_multi_camera_lprnet.py` reads directly from JSON
 
 ## Configuration Files Location
 
@@ -94,7 +94,7 @@ ANPR-Production/
 │   ├── plate_manager.py    # Plate management (reads/writes MySQL)
 │   └── detection_manager.py # Detection management (reads from MySQL)
 │
-└── app_multi_camera.py     # Main ANPR service (reads config.json)
+└── app_multi_camera_lprnet.py     # Main ANPR service (reads config.json)
 ```
 
 ## How to Update Configuration
@@ -129,7 +129,7 @@ ANPR-Production/
 If you want to move camera configuration to MySQL as well:
 
 1. **Update database schema** to store full camera config
-2. **Update `app_multi_camera.py`** to read from MySQL
+2. **Update `app_multi_camera_lprnet.py`** to read from MySQL
 3. **Update `camera_manager.py`** to use MySQL
 4. **Create migration script** to import cameras from JSON
 

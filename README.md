@@ -38,7 +38,7 @@ python create_admin_user.py
 # Configure cameras in config.json
 
 # Run ANPR service
-python app_multi_camera.py
+python app_multi_camera_lprnet.py
 
 # Run admin panel (in another terminal)
 cd admin_panel
@@ -49,7 +49,7 @@ python app.py
 
 ```
 ANPR-Production/
-├── app_multi_camera.py          # Main ANPR processing service
+├── app_multi_camera_lprnet.py          # Main ANPR processing service
 ├── plate_logger.py              # Detection logging module
 ├── db_connection.py             # Database connection handler
 ├── config.json                  # Main configuration file

@@ -4,7 +4,7 @@ This directory contains the ANPR (Automatic Number Plate Recognition) multi-came
 
 ## Files Overview
 
-- `app_multi_camera.py` - Main ANPR application
+- `app_multi_camera_lprnet.py` - Main ANPR application
 - `plate_logger.py` - Plate logging module
 - `config.json` - Configuration file
 - `allowed_plates.json` - Allowed plates database
