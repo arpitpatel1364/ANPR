@@ -50,8 +50,8 @@ if [ ! -f "plate_logger.py" ]; then
 fi
 
 # Start the application
-log "Launching app_multi_camera.py..."
-python "$SCRIPT_DIR/app_multi_camera.py" 2>&1 | tee -a "$LOG_FILE"
+log "Launching app_multi_camera_lprnet.py..."
+python "$SCRIPT_DIR/app_multi_camera_lprnet.py" 2>&1 | tee -a "$LOG_FILE"
 
 # Log when service stops
 log "ANPR Multi-Camera Service stopped."
