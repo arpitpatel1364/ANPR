@@ -9,6 +9,7 @@ import threading
 import queue
 import os
 import sys
+import concurrent.futures
 from datetime import datetime, timedelta
 from typing import Dict, List, Set, Any
 from flask_socketio import SocketIO, emit, join_room, leave_room
@@ -34,10 +35,41 @@ class WebSocketManager:
         self.running = False
         self.last_detection_time = None
         self.last_detection_count = 0
+        self.camera_status_cache = {}
         
         # Start background update thread
         self.start_update_thread()
+        
+        # Start background camera poll thread
+        self.start_camera_poll_thread()
     
+    def start_camera_poll_thread(self):
+        """Start background thread for polling camera status"""
+        poll_thread = threading.Thread(target=self._camera_poll_loop, daemon=True)
+        poll_thread.start()
+        
+    def _camera_poll_loop(self):
+        """Background loop for checking camera connections every 30s"""
+        while self.running:
+            try:
+                config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'config.json')
+                if os.path.exists(config_path):
+                    with open(config_path, 'r') as f:
+                        config = json.load(f)
+                    
+                    cameras = config.get('cameras', [])
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+                        futures = {executor.submit(self._test_camera_connection, cam): cam['id'] for cam in cameras}
+                        for future in concurrent.futures.as_completed(futures):
+                            try:
+                                cam_id = futures[future]
+                                self.camera_status_cache[cam_id] = future.result()
+                            except Exception:
+                                pass
+            except Exception as e:
+                print(f"Error in camera poll loop: {e}")
+            time.sleep(30)
+            
     def start_update_thread(self):
         """Start background thread for sending updates"""
         self.running = True
@@ -183,7 +215,9 @@ class WebSocketManager:
             
             for camera in cameras:
                 # Test camera connection in real-time
-                connection_status = self._test_camera_connection(camera)
+                connection_status = self.camera_status_cache.get(camera['id'], {
+                    'status': 'pending', 'quality': 'unknown', 'response_time': 0, 'error': ''
+                })
                 
                 camera_status.append({
                     'id': camera['id'],
