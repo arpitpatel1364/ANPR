@@ -100,7 +100,7 @@ import time
 from threading import Thread, Lock
 import queue
 import concurrent.futures
-from plate_logger import PlateLogger
+from plate_logger import PlateLogger, _PLATE_CACHE, _cache_lock, global_matcher
 import requests
 from requests.auth import HTTPDigestAuth
 import logging
@@ -761,6 +761,19 @@ class CameraProcessor:
                         continue
 
                     license_plate_text = self.extract_license_plate(ocr_result)
+                    
+                    # === RAPIDFUZZ FUZZY MATCHING LOGIC ===
+                    # Attempt to correct slight OCR mistakes using high-performance rapidfuzz
+                    if license_plate_text:
+                        with _cache_lock:
+                            matcher = global_matcher
+                        
+                        match, status = matcher.match_plate(license_plate_text, 1.0)
+                        if status.startswith("FUZZY"):
+                            if not self.headless_mode:
+                                print(f"✨ [{self.name}] RapidFuzz Corrected: {license_plate_text} -> {match} ({status})")
+                            license_plate_text = match
+                    # ======================================
                     
                     if not self.is_valid_indian_plate(license_plate_text):
                         if self.headless_mode:

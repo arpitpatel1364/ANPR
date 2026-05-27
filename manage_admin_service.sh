@@ -1,7 +1,8 @@
 #!/bin/bash
 
-# ANPR Admin Panel Service Management Script
 # This script provides easy management of the admin panel service
+
+set -e
 
 SERVICE_NAME="anpr-admin-panel"
 

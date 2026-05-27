@@ -5,8 +5,7 @@ opencv-python>=4.5.0
 numpy>=1.21.0
 
 # OCR and Text Processing
-paddlepaddle==2.6.2
-paddleocr==2.8.1
+rapidfuzz>=3.0.0
 
 # Web and API
 requests>=2.25.0

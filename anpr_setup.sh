@@ -38,12 +38,12 @@ function create_python_env() {
 function init_database() {
     echo "==> initializing MySQL database"
     # note: assumes mysql/mariadb is running and config.json has correct credentials
-    python3 init_database.py || die "database initialization failed"
+    python3 scripts/init_database.py || die "database initialization failed"
 }
 
 function create_admin_user_interactive() {
     echo "==> creating admin user"
-    python3 create_admin_user.py || die "admin user creation failed"
+    python3 scripts/create_admin_user.py || die "admin user creation failed"
 }
 
 function install_systemd_services() {

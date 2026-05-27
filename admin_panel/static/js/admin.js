@@ -365,13 +365,7 @@ function getConnectionStatus() {
 function updateDetectionFeed(data) {
     console.log('New detections:', data);
     
-    // Update detection count in dashboard
-    const detectionCountElement = document.getElementById('total-detections'); // Bug #2 fix: was 'totalDetections'
-    if (detectionCountElement) {
-        detectionCountElement.textContent = data.count;
-        detectionCountElement.classList.add('updated');
-        setTimeout(() => detectionCountElement.classList.remove('updated'), 300);
-    }
+    // Total detections count is updated by updateDetectionStats(), not here.
     
         // Add to activity feed for new detections
         if (data.detections && data.detections.length > 0) {
@@ -1442,9 +1436,6 @@ function refreshStats(userTriggered = false) {
         
         // Update detection feed (activity feed only — no table DOM replacement)
         if (detectionData.success) {
-            // Update total count badge
-            const el = document.getElementById('total-detections');
-            if (el) el.textContent = detectionData.count || 0;
             // Update recent detections table (smart diff)
             refreshRecentDetectionsTable(detectionData.data);
         }

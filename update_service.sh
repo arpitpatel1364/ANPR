@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -e
+
 echo "🔄 Updating ANPR Service for headless mode..."
 
 # Stop the current service

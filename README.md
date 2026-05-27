@@ -1,230 +1,178 @@
 # ANPR (Automatic Number Plate Recognition) System
 
-A production-ready license plate recognition system with multi-camera support, real-time detection, and comprehensive admin panel.
 
-## Features
+## 🚀 Quick Start (Production Setup)
 
-- 🚗 **Multi-Camera Support** - Monitor multiple RTSP camera streams simultaneously
-- 🔍 **Real-Time Detection** - Live license plate recognition with high accuracy
-- 📊 **Admin Dashboard** - Comprehensive web-based admin panel
-- 🗄️ **MySQL Database** - Scalable data storage with full history
-- 📸 **Image Storage** - Automatic saving of detection images
-- 📄 **PDF Export** - Export detection records with images
-- 🔐 **User Authentication** - Secure admin panel access
-- 📡 **Real-Time Updates** - WebSocket-based live updates
-- 🎯 **API Integration** - Camera API integration for access control
+**Prerequisites:** Ubuntu 20.04+, Python 3.8+, MySQL/MariaDB, 4GB+ RAM, and optionally a CUDA-capable GPU.
 
-## Quick Start
-
-### Production Setup (Recommended)
+We highly recommend using the automated setup script for production:
 
 ```bash
+# Clone the repository
+git clone <your-repo-url> /opt/anpr-system
+cd /opt/anpr-system
+
+# Make scripts executable
+chmod +x *.sh
+
 # Run automated setup script
 sudo ./setup_production.sh
 ```
 
-See [PRODUCTION_SETUP.md](PRODUCTION_SETUP.md) for detailed manual setup instructions.
+### Manual Development Setup
 
-### Development Setup
-
+If you prefer to run it manually without `systemd`:
 ```bash
-# Install dependencies
+# 1. Install dependencies
+python3 -m venv venv
+source venv/bin/activate
 pip install -r requirements.txt
 
-# Setup database
-python init_database.py
-python create_admin_user.py
+# 2. Setup database
+python scripts/init_database.py
+python scripts/create_admin_user.py
 
-# Configure cameras in config.json
+# 3. Configure cameras in config.json
 
-# Run ANPR service
+# 4. Run ANPR service
 python app_multi_camera_lprnet.py
 
-# Run admin panel (in another terminal)
+# 5. Run admin panel (in another terminal)
 cd admin_panel
 python app.py
 ```
 
-## Project Structure
+---
+
+## 🏗️ Architecture & Project Structure
+
+The project is split into two independent services that work seamlessly together:
+1. **ANPR Service:** Processes camera feeds and saves detections to MySQL.
+2. **Admin Panel Service:** Provides a web interface to view and manage detections.
 
 ```
 ANPR-Production/
-├── app_multi_camera_lprnet.py          # Main ANPR processing service
-├── plate_logger.py              # Detection logging module
+├── app_multi_camera_lprnet.py   # Main ANPR processing service
+├── plate_logger.py              # Detection logging module (MySQL)
 ├── db_connection.py             # Database connection handler
-├── config.json                  # Main configuration file
+├── config.json                  # Main configuration file (cameras, settings)
 ├── database_schema.sql          # Database schema
-├── init_database.py             # Database initialization script
-├── create_admin_user.py         # Admin user creation script
-├── setup_production.sh          # Production setup script
-├── PRODUCTION_SETUP.md          # Production setup guide
+├── scripts/                     # Helper & migration scripts
+│   ├── init_database.py
+│   ├── create_admin_user.py
+│   └── migrate_to_mysql.py
 ├── admin_panel/                 # Admin panel web application
 │   ├── app.py                   # Flask application
 │   ├── templates/               # HTML templates
-│   ├── static/                  # CSS, JS, images
-│   └── ...
+│   └── static/                  # CSS, JS, images
 └── requirements.txt             # Python dependencies
 ```
 
-## Configuration
+### Configuration Storage
 
-### Database Configuration
+| Data Type | Storage Location | Managed By |
+|-----------|-----------------|------------|
+| Detections | MySQL (`detections`) | `plate_logger.py` |
+| Allowed Plates | MySQL (`allowed_plates`) | Admin Panel |
+| Users | MySQL (`users`) | `scripts/create_admin_user.py` |
+| Camera Config | `config.json` | Admin Panel / Manual Edit |
+| System Settings | `config.json` | Manual Edit |
+| Database Config | `config.json` | Manual Edit |
 
-Edit `config.json`:
+**Note on Camera Configuration:** Camera configurations (RTSP URLs, ROIs, thresholds) are intentionally kept in `config.json` to allow complex nested structures like ROI polygons. They can be edited via the Admin Panel UI.
 
-```json
-{
-  "database": {
-    "host": "localhost",
-    "port": 3306,
-    "user": "anpr_user",
-    "password": "your_password",
-    "database": "anpr_system",
-    "pool_size": 5
-  }
-}
-```
+---
 
-### Camera Configuration
+## 🔧 Managing Systemd Services
 
-Add cameras in `config.json`:
+The system is deployed using two background systemd services:
+1. `anpr-multi-camera`
+2. `anpr-admin-panel`
 
-```json
-{
-  "cameras": [
-    {
-      "id": "cam_001",
-      "name": "Main Entrance",
-      "location": "Main Gate",
-      "rtsp_source": "rtsp://user:pass@camera_ip:554/stream",
-      "enabled": true,
-      "confidence_threshold": 0.8,
-      "dedup_window": 50
-    }
-  ]
-}
-```
+We provide handy management scripts (`manage_service.sh` and `manage_admin_service.sh`) so you do not need to memorize systemctl commands.
 
-## Services
-
-### ANPR Service
-
-Processes camera streams and detects license plates:
-
+### ANPR Service Management
 ```bash
-# Start service
-sudo systemctl start anpr-multi-camera
-
-# Check status
-sudo systemctl status anpr-multi-camera
-
-# View logs
-sudo journalctl -u anpr-multi-camera -f
+./manage_service.sh start      # Start the service
+./manage_service.sh stop       # Stop the service
+./manage_service.sh restart    # Restart the service
+./manage_service.sh status     # Check status
+./manage_service.sh logs       # View live logs
 ```
 
-### Admin Panel
-
-Web interface for managing the system (default port: 8084):
-
+### Admin Panel Management
 ```bash
-# Start service
-sudo systemctl start anpr-admin-panel
-
-# Check status
-sudo systemctl status anpr-admin-panel
-
-# View logs
-sudo journalctl -u anpr-admin-panel -f
+./manage_admin_service.sh start    # Start the admin panel
+./manage_admin_service.sh status   # Check status
+./manage_admin_service.sh logs     # View live logs
 ```
 
-## Access
+*(You can also use standard `sudo systemctl start anpr-multi-camera` and `journalctl -u anpr-multi-camera -f` if you prefer).*
 
-- **Admin Panel:** http://your-server-ip:8084
-- **Default Login:**
-  - Username: `admin`
-  - Password: `admin123` (change immediately!)
+---
 
-## Documentation
+## 💻 Admin Panel Interface
 
-- [PRODUCTION_SETUP.md](PRODUCTION_SETUP.md) - Production deployment guide
-- [CONFIGURATION_GUIDE.md](CONFIGURATION_GUIDE.md) - Configuration details
-- [MYSQL_MIGRATION_README.md](MYSQL_MIGRATION_README.md) - Database migration guide
+Once services are running, the Admin Panel is accessible at:
+- **URL**: `http://localhost:8084` (or your server's IP address)
+- **Default Login**: `admin` / `admin123` *(Please change immediately)*
 
-## Requirements
+**Key Capabilities:**
+- **Dashboard:** Real-time statistics, live detection feed, and camera health.
+- **Plates:** Add, delete, and bulk-import allowed license plates.
+- **Cameras:** Visually configure RTSP streams, test connections, and toggle feeds.
+- **History:** Search, filter, and export historical detections.
 
-- Python 3.8+
-- MySQL 5.7+ or MariaDB 10.3+
-- OpenCV
-- PaddleOCR
-- YOLO (Ultralytics)
-- Flask
-- ReportLab (for PDF export)
+---
 
-See `requirements.txt` for complete list.
+## 🗄️ MySQL Database Migration
 
-## Maintenance
+If you are upgrading from an older version of this system that used CSV/JSON for storage, follow these steps to migrate to MySQL:
 
-### Cleanup Unnecessary Files
+1. Setup your MySQL server and configure credentials in `config.json` under the `database` key.
+2. Initialize the tables:
+   ```bash
+   python scripts/init_database.py
+   ```
+3. Run the migration script to safely transfer old data (skips duplicates automatically):
+   ```bash
+   python scripts/migrate_to_mysql.py
+   ```
+4. Start your services. The system is now running purely on MySQL!
 
-```bash
-./cleanup_unnecessary_files.sh
-```
+---
 
-### Backup Database
+## 🛠️ Troubleshooting & Maintenance
 
-```bash
-mysqldump -u anpr_user -p anpr_system > backup_$(date +%Y%m%d).sql
-```
+### Common Issues
 
-### Update System
+**Service won't start:**
+1. Check the logs: `sudo journalctl -u anpr-multi-camera -n 50`
+2. Check permissions: Ensure the user running the service owns the project files.
+3. Verify `config.json` is valid JSON and database credentials are correct.
 
+**Port 8084 already in use (Admin Panel):**
+1. Identify the process: `sudo lsof -i :8084`
+2. Kill the process: `sudo kill -9 <PID>`
+3. Alternatively, change the port in `admin_panel/config.py`.
+
+**Camera Connection Issues:**
+1. Test your RTSP stream manually via VLC or `ffprobe rtsp://your-camera-url`.
+2. Ensure no firewall is blocking the internal RTSP stream.
+
+### Maintenance Commands
+
+**Update System (Git Workflow):**
 ```bash
 cd /opt/anpr-system
 source venv/bin/activate
+git pull
 pip install -r requirements.txt --upgrade
 sudo systemctl restart anpr-multi-camera
 sudo systemctl restart anpr-admin-panel
 ```
 
-## Troubleshooting
-
-### Service Issues
-
+**Backup Database:**
 ```bash
-# Check service status
-sudo systemctl status anpr-multi-camera
-sudo systemctl status anpr-admin-panel
-
-# View recent logs
-sudo journalctl -u anpr-multi-camera -n 50
-sudo journalctl -u anpr-admin-panel -n 50
+mysqldump -u anpr_user -p anpr_system > backup_$(date +%Y%m%d).sql
 ```
-
-### Database Issues
-
-```bash
-# Test connection
-mysql -u anpr_user -p anpr_system
-
-# Check database exists
-mysql -u root -p -e "SHOW DATABASES LIKE 'anpr_system';"
-```
-
-### Camera Issues
-
-- Verify RTSP URLs are accessible
-- Check camera credentials
-- Test stream: `ffprobe rtsp://your-camera-url`
-
-## License
-
-[Your License Here]
-
-## Support
-
-For issues, check:
-- Application logs
-- System logs: `journalctl`
-- Configuration: `config.json`
-- Database: MySQL error logs
-

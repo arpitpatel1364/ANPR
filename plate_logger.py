@@ -6,6 +6,66 @@ from typing import List, Dict, Optional
 import threading
 import queue
 from db_connection import get_connection, DatabaseConnection, execute_query, initialize_database
+from rapidfuzz import process, fuzz
+
+class PlateMatcher:
+    def __init__(self, allowed_plates):
+        self.allowed_set = set(allowed_plates)  # O(1) lookup
+        self.allowed_list = list(allowed_plates)
+
+        # Prefix index
+        self.prefix_map = {}
+        for plate in allowed_plates:
+            prefix = plate[:4]  # e.g. HR26
+            self.prefix_map.setdefault(prefix, []).append(plate)
+
+        self.fuzzy_cache = {}
+        self.last_checked = {}
+        self.COOLDOWN_SEC = 2
+        self.THRESHOLD = 80
+
+    def match_plate(self, detected_plate, confidence=1.0):
+        now = time.time()
+        
+        # 1. Exact match
+        if detected_plate in self.allowed_set:
+            return detected_plate, "EXACT"
+
+        # (Skipping confidence > 0.9 check because LPRNet currently hardcodes confidence to 1.0)
+        
+        # 2. Cooldown
+        if detected_plate in self.last_checked:
+            if now - self.last_checked[detected_plate] < self.COOLDOWN_SEC:
+                return None, "SKIPPED_COOLDOWN"
+
+        self.last_checked[detected_plate] = now
+
+        # 3. Cache hit
+        if detected_plate in self.fuzzy_cache:
+            return self.fuzzy_cache[detected_plate], "CACHED"
+
+        # 4. Prefix filtering
+        prefix = detected_plate[:4]
+        candidates = self.prefix_map.get(prefix, [])
+
+        if not candidates:
+            return None, "NO_CANDIDATES"
+
+        # 5. Fast fuzzy match
+        match, score, _ = process.extractOne(
+            detected_plate,
+            candidates,
+            scorer=fuzz.ratio
+        )
+
+        if score >= self.THRESHOLD:
+            self.fuzzy_cache[detected_plate] = match
+            return match, f"FUZZY_{score}"
+
+        return None, "NO_MATCH"
+
+global_matcher = PlateMatcher([])
+
 
 _PLATE_CACHE = {}         # { plate: (is_allowed, timestamp) }
 _CACHE_TTL = 30           # seconds
@@ -94,9 +154,10 @@ class PlateLogger:
                     new_cache[r['license_plate']] = (True, curr_time)
                     
                 with _cache_lock:
-                    global _PLATE_CACHE
+                    global _PLATE_CACHE, global_matcher
                     _PLATE_CACHE.clear()
                     _PLATE_CACHE.update(new_cache)
+                    global_matcher = PlateMatcher(new_cache.keys())
             except Exception as e:
                 print(f"⚠️ Error refreshing plate cache: {e}")
     
