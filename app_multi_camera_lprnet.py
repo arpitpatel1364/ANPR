@@ -4,7 +4,7 @@ import os
 os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|max_delay;500000|stimeout;5000000"
 import json
 import sys
-import config_db
+import scripts.config_db as config_db
 
 def can_use_display():
     """
