@@ -61,27 +61,27 @@ else
 fi
 
 # 3) Initialize database if init script exists
-if [ -f "$PROJECT_DIR/init_database.py" ]; then
+if [ -f "$PROJECT_DIR/scripts/init_database.py" ]; then
     if command -v mysql &>/dev/null; then
-        info "Initializing database (init_database.py)"
-        "$VENV_DIR/bin/python" "$PROJECT_DIR/init_database.py" || warn "Database init returned non-zero"
+        info "Initializing database (scripts/init_database.py)"
+        "$VENV_DIR/bin/python" "$PROJECT_DIR/scripts/init_database.py" || warn "Database init returned non-zero"
     else
         warn "MySQL client not found — skipping DB initialization"
     fi
 else
-    warn "init_database.py not found — skipping DB initialization"
+    warn "scripts/init_database.py not found — skipping DB initialization"
 fi
 
 # 3a) Create admin user if creation script exists
-if [ -f "$PROJECT_DIR/create_admin_user.py" ]; then
+if [ -f "$PROJECT_DIR/scripts/create_admin_user.py" ]; then
     if command -v mysql &>/dev/null; then
-        info "Creating admin user (create_admin_user.py)"
-        "$VENV_DIR/bin/python" "$PROJECT_DIR/create_admin_user.py" || warn "Admin user creation returned non-zero"
+        info "Creating admin user (scripts/create_admin_user.py)"
+        "$VENV_DIR/bin/python" "$PROJECT_DIR/scripts/create_admin_user.py" || warn "Admin user creation returned non-zero"
     else
         warn "MySQL client not found — skipping admin user creation"
     fi
 else
-    warn "create_admin_user.py not found — skipping admin user creation"
+    warn "scripts/create_admin_user.py not found — skipping admin user creation"
 fi
 
 # 4) Ensure project service files are installed and configured

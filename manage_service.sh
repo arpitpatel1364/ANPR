@@ -3,6 +3,8 @@
 # ANPR Service Management Script
 # Easy commands to manage the ANPR service
 
+set -e
+
 SERVICE_NAME="anpr-multi-camera"
 
 show_help() {
@@ -26,39 +28,39 @@ show_help() {
 case "$1" in
     start)
         echo "🚀 Starting ANPR service..."
-        systemctl start $SERVICE_NAME
+        sudo systemctl start $SERVICE_NAME
         echo "✅ Service started"
         ;;
     stop)
         echo "🛑 Stopping ANPR service..."
-        systemctl stop $SERVICE_NAME
+        sudo systemctl stop $SERVICE_NAME
         echo "✅ Service stopped"
         ;;
     restart)
         echo "🔄 Restarting ANPR service..."
-        systemctl restart $SERVICE_NAME
+        sudo systemctl restart $SERVICE_NAME
         echo "✅ Service restarted"
         ;;
     status)
         echo "📊 ANPR Service Status:"
-        systemctl status $SERVICE_NAME
+        sudo systemctl status $SERVICE_NAME
         ;;
     logs)
         echo "📝 Showing live ANPR service logs (Ctrl+C to exit):"
-        journalctl -u $SERVICE_NAME -f
+        sudo journalctl -u $SERVICE_NAME -f
         ;;
     logs-tail)
         echo "📝 Last 50 ANPR service log lines:"
-        journalctl -u $SERVICE_NAME -n 50
+        sudo journalctl -u $SERVICE_NAME -n 50
         ;;
     enable)
         echo "🔧 Enabling ANPR service to start on boot..."
-        systemctl enable $SERVICE_NAME
+        sudo systemctl enable $SERVICE_NAME
         echo "✅ Service enabled for auto-start"
         ;;
     disable)
         echo "🚫 Disabling ANPR service from starting on boot..."
-        systemctl disable $SERVICE_NAME
+        sudo systemctl disable $SERVICE_NAME
         echo "✅ Service disabled from auto-start"
         ;;
     install)

@@ -1,7 +1,8 @@
 #!/bin/bash
 
-# ANPR Service Startup Script
 # This script starts the ANPR multi-camera system
+
+set -e
 
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -51,7 +52,7 @@ fi
 
 # Start the application
 log "Launching app_multi_camera_lprnet.py..."
-python "$SCRIPT_DIR/app_multi_camera_lprnet.py" 2>&1 | tee -a "$LOG_FILE"
+"$SCRIPT_DIR/anpr_env/bin/python" "$SCRIPT_DIR/app_multi_camera_lprnet.py" 2>&1 | tee -a "$LOG_FILE"
 
 # Log when service stops
 log "ANPR Multi-Camera Service stopped."
