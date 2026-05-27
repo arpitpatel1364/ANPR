@@ -6,6 +6,31 @@ let lastDetectionTimestamp = null; // Track last detection to avoid duplicate no
 let pageLoadTime = Date.now(); // Track when page was loaded
 let initialLoadComplete = false; // Flag to suppress notifications during initial page load
 
+// Debounce utility — prevents a function running more than once per `wait` ms
+function debounce(fn, wait) {
+    let timer = null;
+    return function(...args) {
+        if (timer) return; // already scheduled, skip
+        timer = setTimeout(() => { timer = null; fn.apply(this, args); }, wait);
+    };
+}
+
+// Debounced background stats refresh — at most once every 10 seconds
+const _debouncedStatsRefresh = debounce(function() {
+    fetch('/api/detections/stats')
+        .then(r => r.json())
+        .then(data => { if (data.success) updateDetectionStats(data.data); })
+        .catch(() => {});
+}, 10000);
+
+// Debounced dashboard table refresh — at most once every 10 seconds
+const _debouncedTableRefresh = debounce(function() {
+    fetch('/api/detections/recent?limit=10')
+        .then(r => r.json())
+        .then(data => { if (data.success) refreshRecentDetectionsTable(data.data); })
+        .catch(() => {});
+}, 10000);
+
 // Initialize when DOM is loaded
 document.addEventListener('DOMContentLoaded', function() {
     initializeAdminPanel();
@@ -338,7 +363,7 @@ function updateDetectionFeed(data) {
     console.log('New detections:', data);
     
     // Update detection count in dashboard
-    const detectionCountElement = document.getElementById('totalDetections');
+    const detectionCountElement = document.getElementById('total-detections'); // Bug #2 fix: was 'totalDetections'
     if (detectionCountElement) {
         detectionCountElement.textContent = data.count;
         detectionCountElement.classList.add('updated');
@@ -386,36 +411,35 @@ function updateDetectionFeed(data) {
                 addActivityItem('New Detection', `Plate ${latestDetection.plate || 'Unknown'} detected by ${latestDetection.camera_name || latestDetection.camera || 'Unknown Camera'}`, 'camera-video', 'success');
             }
         }
+
+    // Lightweight background refresh — only update stat counters, never replace table DOM
+    // Uses debounce so it fires at most once per 10 s regardless of WebSocket frequency
+    const path = window.location.pathname;
+    if (path === '/' || path === '/dashboard' || path.endsWith('/dashboard')) {
+        _debouncedStatsRefresh();   // update counter numbers only
+        _debouncedTableRefresh();   // update recent detections table only
+    }
+    // On /detections page: do NOT call applyFilters() — it replaces the full table HTML
+    // causing a flash. The user can click Refresh manually if they want a full reload.
 }
 
 // Update detection statistics
 function updateDetectionStats(data) {
-    console.log('Detection stats update:', data);
-    
-    // Update stats cards
-    const totalDetectionsElement = document.getElementById('total-detections');
-    if (totalDetectionsElement) {
-        totalDetectionsElement.textContent = data.total_detections || 0;
-        totalDetectionsElement.style.color = ''; // Reset color
+    // Only write to DOM when the value actually changes — avoids unnecessary repaints
+    function safeSetText(id, value) {
+        const el = document.getElementById(id);
+        if (!el) return;
+        const v = String(value ?? 0);
+        if (el.textContent !== v) {
+            el.textContent = v;
+            el.style.color = ''; // Reset error color if it was set
+        }
     }
     
-    const verifiedDetectionsElement = document.getElementById('verified-detections');
-    if (verifiedDetectionsElement) {
-        verifiedDetectionsElement.textContent = data.verified_detections || 0;
-        verifiedDetectionsElement.style.color = ''; // Reset color
-    }
-    
-    const notVerifiedDetectionsElement = document.getElementById('unverified-detections');
-    if (notVerifiedDetectionsElement) {
-        notVerifiedDetectionsElement.textContent = data.not_verified_detections || 0;
-        notVerifiedDetectionsElement.style.color = ''; // Reset color
-    }
-    
-    const todayDetectionsElement = document.getElementById('today-detections');
-    if (todayDetectionsElement) {
-        todayDetectionsElement.textContent = data.detections_today || 0;
-        todayDetectionsElement.style.color = ''; // Reset color
-    }
+    safeSetText('total-detections',    data.total_detections    || 0);
+    safeSetText('verified-detections', data.verified_detections || 0);
+    safeSetText('unverified-detections', data.not_verified_detections || data.unverified_detections || 0);
+    safeSetText('today-detections',    data.detections_today    || data.today_detections || 0);
     
     // Show live update indicator
     showLiveUpdateIndicator();
@@ -681,9 +705,11 @@ function toggleCameraLive(cameraId, enabled) {
         return;
     }
     
+    // Capture original text before any modifications
+    const originalText = toggleButton ? toggleButton.innerHTML : '';
+    
     // Show immediate progress feedback
     if (toggleButton) {
-        const originalText = toggleButton.innerHTML;
         toggleButton.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Processing...';
         toggleButton.disabled = true;
         toggleButton.classList.add('processing');
@@ -724,12 +750,11 @@ function toggleCameraLive(cameraId, enabled) {
     } else {
         // Revert UI on error
         if (toggleButton) {
-            const currentEnabled = toggleButton.textContent.includes('Disable');
-            updateCameraUI(cameraId, !currentEnabled);
             toggleButton.innerHTML = originalText;
             toggleButton.disabled = false;
             toggleButton.classList.remove('processing');
         }
+        updateCameraUI(cameraId, !enabled);
         if (cameraElement) {
             cameraElement.classList.remove('processing');
         }
@@ -1066,95 +1091,56 @@ function disableAllCameras() {
     }
 }
 
-// Live Detection Feed Functions
-function refreshDetections() {
-    fetch('/api/detections/recent?limit=10')
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                updateDetectionFeed({ detections: data.data, count: data.count });
-                showNotification('Detections refreshed', 'info');
-            }
-        })
-        .catch(error => {
-            console.error('Error refreshing detections:', error);
-            showNotification('Failed to refresh detections', 'error');
-        });
+// Note: refreshDetections for the dashboard is handled by refreshStats().
+// The detections.html page defines its own refreshDetections() in the page script block.
+
+// -----------------------------------------------------------------------
+// refreshRecentDetectionsTable — updates the dashboard static table live
+// Uses smart diffing to avoid full DOM replacement (eliminates flash/glitch)
+// -----------------------------------------------------------------------
+function refreshRecentDetectionsTable(detections) {
+    const tbody = document.querySelector('#recent-detections-tbody');
+    if (!tbody || !detections || detections.length === 0) return;
+
+    // Build a fingerprint of the new data (first plate + count)
+    const newFingerprint = (detections[0]?.plate || '') + '|' + detections.length;
+    const oldFingerprint = tbody.dataset.fingerprint || '';
+
+    // Skip DOM update entirely if data hasn't changed — no flicker, no work
+    if (newFingerprint === oldFingerprint) return;
+
+    // Build new HTML
+    const newHtml = detections.slice(0, 10).map(d => {
+        const ts = d.timestamp ? new Date(d.timestamp).toLocaleString() : '-';
+        const plate = d.plate || '-';
+        const status = d.verification_status || '-';
+        const camera = d.camera || '-';
+        const conf = d.confidence ? parseFloat(d.confidence).toFixed(1) + '%' : '-';
+        const badgeClass = status === 'VERIFIED' ? 'bg-success-gradient' : 'bg-warning-gradient';
+        const imgHtml = d.image_full_annotated
+            ? `<img src="${d.image_full_annotated}" alt="Plate" style="width:70px;height:40px;object-fit:cover;border-radius:6px;cursor:pointer;" onclick="showImagePreview('${d.image_full_annotated}', 'Annotated Frame')">`
+            : '<i class="bi bi-image text-muted"></i>';
+        return `<tr>
+            <td><small class="text-muted">${ts}</small></td>
+            <td><span class="fw-bold">${plate}</span></td>
+            <td><span class="badge badge-modern ${badgeClass}">${status}</span></td>
+            <td><small>${camera}</small></td>
+            <td><span class="badge badge-modern badge-info">${conf}</span></td>
+            <td>${imgHtml}</td>
+        </tr>`;
+    }).join('');
+
+    // Smooth fade-out → update → fade-in to avoid a hard flash
+    tbody.style.transition = 'opacity 0.15s ease';
+    tbody.style.opacity = '0';
+    setTimeout(() => {
+        tbody.innerHTML = newHtml;
+        tbody.dataset.fingerprint = newFingerprint;
+        tbody.style.opacity = '1';
+        if (typeof processDynamicCrops === 'function') processDynamicCrops();
+    }, 150);
 }
 
-// Enhanced detection feed update
-function updateDetectionFeed(data) {
-    console.log('New detections:', data);
-    
-    // Update detection count in dashboard
-    const detectionCountElement = document.getElementById('totalDetections');
-    if (detectionCountElement) {
-        detectionCountElement.textContent = data.count;
-        detectionCountElement.classList.add('updated');
-        setTimeout(() => detectionCountElement.classList.remove('updated'), 300);
-    }
-    
-    // Update live detection feed (if section exists)
-    if (data.detections && data.detections.length > 0) {
-        const liveFeed = document.getElementById('liveDetectionFeed');
-        if (liveFeed) {
-            // Clear existing items
-            liveFeed.innerHTML = '';
-            
-            // Add new detections
-            // Ensure newest first
-            const sorted = [...data.detections].sort((a, b) => (new Date(b.timestamp)) - (new Date(a.timestamp)));
-            sorted.forEach((detection, index) => {
-                const detectionItem = createDetectionItem(detection);
-                liveFeed.appendChild(detectionItem);
-                
-                // Add animation delay for staggered effect
-                setTimeout(() => {
-                    detectionItem.classList.add('animate');
-                }, index * 100);
-            });
-        }
-        
-        // Add to activity feed for latest detection
-        const latestDetection = data.detections[0];
-        
-        // Get detection timestamp (could be in different formats)
-        let detectionTime = null;
-        if (latestDetection.timestamp) {
-            detectionTime = new Date(latestDetection.timestamp).getTime();
-        } else if (latestDetection.time) {
-            detectionTime = new Date(latestDetection.time).getTime();
-        }
-        
-        // Only show notification if:
-        // 1. Initial page load is complete (don't show notifications for data loaded on page load)
-        // 2. It's a verified plate
-        // 3. It's actually a new detection (happened after page load or after last known detection)
-        const isNewDetection = detectionTime && (
-            detectionTime > pageLoadTime || 
-            (lastDetectionTimestamp && detectionTime > lastDetectionTimestamp)
-        );
-        
-        // Only show notification for truly new, verified detections (after initial load)
-        if (initialLoadComplete && latestDetection.verification_status === 'VERIFIED' && latestDetection.plate && isNewDetection) {
-            showNotification(`Verified plate detected: ${latestDetection.plate}`, 'success');
-            // Update last detection timestamp
-            if (detectionTime) {
-                lastDetectionTimestamp = detectionTime;
-            }
-        }
-        
-        // Update last detection timestamp even if we don't show notification
-        if (detectionTime && (!lastDetectionTimestamp || detectionTime > lastDetectionTimestamp)) {
-            lastDetectionTimestamp = detectionTime;
-        }
-        
-        // Add to activity feed (but only for new detections)
-        if (isNewDetection) {
-            addActivityItem('New Detection', `Plate ${latestDetection.plate || 'Unknown'} detected by ${latestDetection.camera_name || latestDetection.camera || 'Unknown Camera'}`, 'camera-video', 'success');
-        }
-    }
-}
 
 function createDetectionItem(detection) {
     const item = document.createElement('div');
@@ -1303,6 +1289,7 @@ function loadInitialData() {
         .then(data => {
             if (data.success) {
                 updateDetectionFeed({ detections: data.data, count: data.count });
+                refreshRecentDetectionsTable(data.data);
             }
         })
         .catch(error => {
@@ -1321,6 +1308,11 @@ function loadInitialData() {
         .catch(error => {
             console.error('Error loading detection stats:', error);
             showErrorState('Detection Stats');
+        })
+        .finally(() => {
+            // Mark initial load complete once stats have returned
+            initialLoadComplete = true;
+            console.log('✅ Initial page load complete - notifications enabled for new detections only');
         });
     
     console.log('Initial data loaded');
@@ -1395,14 +1387,18 @@ function refreshDetections() {
 }
 
 // Refresh all dashboard statistics
-function refreshStats() {
-    console.log('Refreshing all dashboard statistics...');
+// userTriggered=true  → show button spinner, show notifications (manual click)
+// userTriggered=false → silent background update (no UI flicker)
+function refreshStats(userTriggered = false) {
+    console.log('Refreshing all dashboard statistics...', userTriggered ? '(user)' : '(background)');
     
-    // Show loading state
+    // Only mutate the button on explicit user click
     const refreshBtn = document.querySelector('button[onclick="refreshStats()"]');
-    const originalText = refreshBtn.innerHTML;
-    refreshBtn.innerHTML = '<i class="bi bi-hourglass-split me-2"></i>Refreshing...';
-    refreshBtn.disabled = true;
+    const originalText = refreshBtn ? refreshBtn.innerHTML : '';
+    if (userTriggered && refreshBtn) {
+        refreshBtn.innerHTML = '<i class="bi bi-hourglass-split me-2"></i>Refreshing...';
+        refreshBtn.disabled = true;
+    }
     
     // Refresh all data
     Promise.all([
@@ -1426,9 +1422,13 @@ function refreshStats() {
             updateCameraStatus({ cameras: cameraData.data.cameras });
         }
         
-        // Update detection feed
+        // Update detection feed (activity feed only — no table DOM replacement)
         if (detectionData.success) {
-            updateDetectionFeed({ detections: detectionData.data, count: detectionData.count });
+            // Update total count badge
+            const el = document.getElementById('total-detections');
+            if (el) el.textContent = detectionData.count || 0;
+            // Update recent detections table (smart diff)
+            refreshRecentDetectionsTable(detectionData.data);
         }
         
         // Update stats cards
@@ -1436,19 +1436,21 @@ function refreshStats() {
             updateDetectionStats(statsData.data);
         }
         
-        // Add activity item
-        addActivityItem('Dashboard', 'All statistics refreshed', 'arrow-clockwise', 'success');
-        
-        // Don't show notification for routine refresh
+        // Add activity item only on explicit user-triggered refresh
+        if (userTriggered) {
+            addActivityItem('Dashboard', 'All statistics refreshed', 'arrow-clockwise', 'success');
+        }
     })
     .catch(error => {
         console.error('Error refreshing dashboard:', error);
-        showNotification('Error refreshing dashboard', 'error');
+        if (userTriggered) showNotification('Error refreshing dashboard', 'error');
     })
     .finally(() => {
-        // Restore button state
-        refreshBtn.innerHTML = originalText;
-        refreshBtn.disabled = false;
+        if (userTriggered && refreshBtn) {
+            refreshBtn.innerHTML = originalText;
+            refreshBtn.disabled = false;
+        }
+        initialLoadComplete = true;
     });
 }
 
@@ -1513,13 +1515,6 @@ function initializeAdminPanel() {
     
     // Initialize WebSocket connection
     initializeWebSocket();
-    
-    // Mark initial load as complete after initial data loads
-    // This prevents showing notifications for old detections loaded on page load
-    setTimeout(function() {
-        initialLoadComplete = true;
-        console.log('✅ Initial page load complete - notifications enabled for new detections only');
-    }, 3000); // 3 seconds should be enough for initial data to load
     
     // Load initial data
     loadInitialData();

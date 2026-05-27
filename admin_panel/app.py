@@ -36,7 +36,7 @@ socketio = SocketIO(
     engineio_logger=False,  # Disable EngineIO logging
     ping_timeout=60,  # Increase ping timeout
     ping_interval=25,  # Increase ping interval
-    transports=['polling'] # Force polling to prevent websocket AssertionError in Werkzeug
+    transports=['polling', 'websocket']  # Allow both; client will upgrade from polling to websocket
 )
 
 # Security configuration

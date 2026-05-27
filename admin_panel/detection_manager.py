@@ -184,34 +184,6 @@ def detections():
                          date_to=date_to,
                          cameras=cameras)
 
-@detection_bp.route('/detections/stats')
-def detections_stats():
-    """API endpoint for detection statistics"""
-    try:
-        with DatabaseConnection() as db:
-            db.execute("SELECT COUNT(*) as count FROM detections")
-            result = db.fetchone()
-            total_detections = result['count'] if result else 0
-            
-            db.execute("SELECT COUNT(*) as count FROM detections WHERE verification_status = 'VERIFIED'")
-            result = db.fetchone()
-            verified_detections = result['count'] if result else 0
-            
-            db.execute("SELECT COUNT(*) as count FROM detections WHERE verification_status = 'NOT_VERIFIED'")
-            result = db.fetchone()
-            unverified_detections = result['count'] if result else 0
-            
-            verification_rate = (verified_detections / total_detections * 100) if total_detections > 0 else 0
-        
-        return jsonify({
-            'total_detections': total_detections,
-            'verified_detections': verified_detections,
-            'unverified_detections': unverified_detections,
-            'verification_rate': round(verification_rate, 1)
-        })
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
 @detection_bp.route('/detections/export')
 def export_detections():
     """Export detections to CSV"""
@@ -272,6 +244,7 @@ def export_detections():
         # Save to temporary file
         import tempfile
         temp_fd, temp_path = tempfile.mkstemp(suffix='.csv', prefix='detections_')
+        os.close(temp_fd)  # Close fd immediately to avoid leak; file will be opened by path below
         
         with open(temp_path, 'w', newline='', encoding='utf-8') as f:
             fieldnames = ['Timestamp', 'License_Plate', 'Verification_Status', 'Access_Granted',

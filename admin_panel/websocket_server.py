@@ -77,11 +77,13 @@ class WebSocketManager:
                     new_detections = self._get_recent_detections(5)  # Get last 5
                     
                     if new_detections:
+                        # broadcast to ALL rooms (not just 'detections'),
+                        # so Dashboard users also receive real-time updates
                         self.socketio.emit('new_detections', {
                             'detections': new_detections,
                             'count': current_count,
                             'timestamp': datetime.now().isoformat()
-                        }, room='detections')
+                        }, broadcast=True)
                         
                         # Also send to dashboard
                         self.socketio.emit('detection_update', {
@@ -102,7 +104,8 @@ class WebSocketManager:
             with DatabaseConnection() as db:
                 query = """
                     SELECT timestamp, license_plate, camera_source, detection_confidence,
-                           verification_status, access_granted, frame_number
+                           verification_status, access_granted, frame_number,
+                           image_full_annotated, bbox_x1, bbox_y1, bbox_x2, bbox_y2
                     FROM detections
                     ORDER BY timestamp DESC
                     LIMIT %s
@@ -119,7 +122,13 @@ class WebSocketManager:
                         'confidence': float(row['detection_confidence']),
                         'verification_status': row['verification_status'],
                         'access_granted': row['access_granted'],
-                        'frame_number': row['frame_number']
+                        'frame_number': row['frame_number'],
+                        # include image paths and bounding boxes
+                        'image_full_annotated': row['image_full_annotated'] or '',
+                        'bbox_x1': row['bbox_x1'],
+                        'bbox_y1': row['bbox_y1'],
+                        'bbox_x2': row['bbox_x2'],
+                        'bbox_y2': row['bbox_y2']
                     })
                 
                 return detections  # Already ordered newest first
@@ -162,7 +171,7 @@ class WebSocketManager:
     def _send_camera_status(self):
         """Send enhanced camera status updates with real-time monitoring"""
         try:
-            config_path = '../config.json'
+            config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'config.json')
             if not os.path.exists(config_path):
                 return
             
@@ -353,7 +362,7 @@ def register_websocket_events(socketio: SocketIO):
             # Don't emit on error to avoid WSGI issues
     
     @socketio.on('disconnect')
-    def handle_disconnect(sid):
+    def handle_disconnect():
         """Handle client disconnection"""
         try:
             client_id = request.sid
@@ -517,7 +526,7 @@ def register_websocket_events(socketio: SocketIO):
                 return
             
             # Load current config
-            config_path = '../config.json'
+            config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'config.json')
             if not os.path.exists(config_path):
                 emit('camera_toggle_result', {
                     'success': False,
@@ -583,7 +592,7 @@ def register_websocket_events(socketio: SocketIO):
                 return
             
             # Load camera config
-            config_path = '../config.json'
+            config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'config.json')
             if not os.path.exists(config_path):
                 emit('camera_test_result', {
                     'success': False,

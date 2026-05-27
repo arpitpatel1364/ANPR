@@ -12,7 +12,7 @@
         <div class="action-bar">
             <div class="d-flex justify-content-start align-items-center">
                 <div class="action-content">
-                    <button class="btn btn-primary btn-modern btn-modern-enhanced" onclick="refreshStats()">
+                    <button class="btn btn-primary btn-modern btn-modern-enhanced" onclick="refreshStats(true)">
                         <i class="bi bi-arrow-clockwise me-2"></i>Refresh Data
                     </button>
                     <button class="btn btn-outline-primary btn-modern btn-modern-enhanced ms-2">
@@ -289,7 +289,7 @@
                                 <th>Plate Image</th>
                             </tr>
                         </thead>
-                        <tbody>
+                        <tbody id="recent-detections-tbody">
                             {% for detection in recent_detections %}
                             <tr>
                                 <td>
@@ -400,7 +400,7 @@ function processDynamicCrops() {
             img.style.top = `${offsetY - (cropY * scale)}px`;
             img.style.visibility = 'visible';
         };
-        tempImg.src = src;
+        tempImg.src = src + (src.includes('?') ? '&' : '?') + 't=' + Date.now();
     });
 }
 

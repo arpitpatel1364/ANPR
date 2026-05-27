@@ -258,11 +258,11 @@
                                     {% set x2 = detection['bbox_x2'] %}
                                     {% set y2 = detection['bbox_y2'] %}
                                     {% if ann and x1 is not none and y1 is not none %}
-                                    <div class="dynamic-crop-container shadow-sm" data-src="{{ ann }}" data-x1="{{ x1 }}" data-y1="{{ y1 }}" data-x2="{{ x2 }}" data-y2="{{ y2 }}" style="width:60px;height:35px;border-radius:4px;overflow:hidden;position:relative;background:#f0f0f0;cursor:pointer;" onclick="previewImage('{{ ann }}')" title="Click to view full image">
-                                        <img src="{{ ann }}" style="position:absolute;visibility:hidden;">
+                                    <div class="dynamic-crop-container shadow-sm" data-src="{{ ann }}?t={{ detection['timestamp'].timestamp()|int if detection['timestamp'] else 0 }}" data-x1="{{ x1 }}" data-y1="{{ y1 }}" data-x2="{{ x2 }}" data-y2="{{ y2 }}" style="width:60px;height:35px;border-radius:4px;overflow:hidden;position:relative;background:#f0f0f0;cursor:pointer;" onclick="previewImage('{{ ann }}?t={{ detection['timestamp'].timestamp()|int if detection['timestamp'] else 0 }}')" title="Click to view full image">
+                                        <img src="{{ ann }}?t={{ detection['timestamp'].timestamp()|int if detection['timestamp'] else 0 }}" style="position:absolute;visibility:hidden;">
                                     </div>
                                     {% elif ann %}
-                                    <img src="{{ ann }}" alt="Annotated" style="width:60px;height:35px;object-fit:cover;border-radius:4px;cursor:pointer;" onclick="previewImage('{{ ann }}')">
+                                    <img src="{{ ann }}?t={{ detection['timestamp'].timestamp()|int if detection['timestamp'] else 0 }}" alt="Annotated" style="width:60px;height:35px;object-fit:cover;border-radius:4px;cursor:pointer;" onclick="previewImage('{{ ann }}?t={{ detection['timestamp'].timestamp()|int if detection['timestamp'] else 0 }}')">
                                     {% else %}
                                     <i class="bi bi-image text-muted"></i>
                                     {% endif %}
@@ -296,7 +296,7 @@
                                         <button class="btn btn-outline-primary btn-modern btn-modern-enhanced" data-detection='{{ detection|tojson }}' onclick="viewDetailsFromButton(this)" title="View Details">
                                             <i class="bi bi-eye"></i>
                                         </button>
-                                        <button class="btn btn-outline-danger btn-modern btn-modern-enhanced" onclick="deleteDetection('{{ loop.index + (current_page - 1) * per_page }}')" title="Delete Detection">
+                                        <button class="btn btn-outline-danger btn-modern btn-modern-enhanced" onclick="deleteDetection('{{ detection.id }}')" title="Delete Detection">
                                             <i class="bi bi-trash"></i>
                                         </button>
                                     </div>
@@ -745,7 +745,7 @@ function processDynamicCrops() {
             img.style.top = `${offsetY - (cropY * scale)}px`;
             img.style.visibility = 'visible';
         };
-        tempImg.src = src;
+        tempImg.src = src + (src.includes('?') ? '&' : '?') + 't=' + Date.now();
     });
 }
 
