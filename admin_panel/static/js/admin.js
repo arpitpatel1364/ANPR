@@ -69,8 +69,7 @@ function initializeWebSocket() {
         
         // Connect to WebSocket server with optimized settings
         socket = io({
-            transports: ['websocket'],
-            upgrade: false,
+            transports: ['polling', 'websocket'],
             rememberUpgrade: false,
             timeout: 10000, // Increased timeout for better reliability
             forceNew: true,
@@ -1045,7 +1044,7 @@ function testCamera(cameraId) {
     button.disabled = true;
     
     fetch(`/cameras/test/${cameraId}`, {
-        method: 'POST',
+        method: 'GET',
         headers: {
             'Content-Type': 'application/json',
         }
