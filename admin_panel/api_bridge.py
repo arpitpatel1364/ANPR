@@ -88,7 +88,7 @@ class ANPRSystemMonitor:
     def _check_camera_status(self):
         """Check camera connection status"""
         try:
-            config_path = '../config.json'
+            config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'config.json')
             if os.path.exists(config_path):
                 with open(config_path, 'r') as f:
                     config = json.load(f)
@@ -138,7 +138,8 @@ class ANPRSystemMonitor:
             with DatabaseConnection() as db:
                 query = """
                     SELECT timestamp, license_plate, camera_source, detection_confidence,
-                           verification_status, access_granted, frame_number
+                           verification_status, access_granted, frame_number,
+                           image_full_annotated, bbox_x1, bbox_y1, bbox_x2, bbox_y2
                     FROM detections
                     ORDER BY timestamp DESC
                     LIMIT %s
@@ -155,7 +156,13 @@ class ANPRSystemMonitor:
                         'confidence': float(row['detection_confidence']),
                         'verification_status': row['verification_status'],
                         'access_granted': row['access_granted'],
-                        'frame_number': row['frame_number']
+                        'frame_number': row['frame_number'],
+                        # include image paths and bounding boxes
+                        'image_full_annotated': row['image_full_annotated'] or '',
+                        'bbox_x1': row['bbox_x1'],
+                        'bbox_y1': row['bbox_y1'],
+                        'bbox_x2': row['bbox_x2'],
+                        'bbox_y2': row['bbox_y2']
                     })
                 
                 return detections  # Already ordered newest first
@@ -167,7 +174,7 @@ class ANPRSystemMonitor:
     def get_camera_stats(self) -> Dict[str, Any]:
         """Get camera statistics"""
         try:
-            config_path = '../config.json'
+            config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'config.json')
             if not os.path.exists(config_path):
                 return {}
             
