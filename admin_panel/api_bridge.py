@@ -19,6 +19,7 @@ import queue
 # Add parent directory to path for db_connection import
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from db_connection import DatabaseConnection
+import hashlib
 from plate_logger import PlateLogger
 
 api_bridge_bp = Blueprint('api_bridge', __name__)
@@ -159,6 +160,7 @@ class ANPRSystemMonitor:
                         'frame_number': row['frame_number'],
                         # include image paths and bounding boxes
                         'image_full_annotated': row['image_full_annotated'] or '',
+                        'thumbnail_url': row['image_full_annotated'].replace('.webp', '_thumb.webp') if row['image_full_annotated'] and row['image_full_annotated'].endswith('.webp') else row['image_full_annotated'] or '',
                         'bbox_x1': row['bbox_x1'],
                         'bbox_y1': row['bbox_y1'],
                         'bbox_x2': row['bbox_x2'],
@@ -205,88 +207,45 @@ class ANPRSystemMonitor:
             print(f"Error getting camera stats: {e}")
             return {}
 
-    def get_total_detections(self) -> int:
-        """Get total number of detections"""
+    def get_all_detection_stats(self) -> Dict[str, Any]:
+        """Get all detection statistics in a single query to avoid N+1 queries"""
         try:
             with DatabaseConnection() as db:
-                db.execute("SELECT COUNT(*) as count FROM detections")
-                result = db.fetchone()
-                return result['count'] if result else 0
+                query = """
+                    SELECT
+                        COUNT(*) as total,
+                        SUM(verification_status = 'VERIFIED') as verified,
+                        SUM(verification_status = 'NOT_VERIFIED') as not_verified,
+                        SUM(DATE(timestamp) = CURRENT_DATE()) as today,
+                        SUM(DATE(timestamp) >= DATE_SUB(CURRENT_DATE(), INTERVAL WEEKDAY(CURRENT_DATE()) DAY)) as this_week,
+                        SUM(DATE_FORMAT(timestamp, '%Y-%m') = DATE_FORMAT(CURRENT_DATE(), '%Y-%m')) as this_month,
+                        MAX(timestamp) as last_time
+                    FROM detections
+                """
+                db.execute(query)
+                res = db.fetchone()
+                
+                stats = {
+                    'total_detections': int(res['total'] or 0) if res else 0,
+                    'verified_detections': int(res['verified'] or 0) if res else 0,
+                    'not_verified_detections': int(res['not_verified'] or 0) if res else 0,
+                    'detections_today': int(res['today'] or 0) if res else 0,
+                    'detections_this_week': int(res['this_week'] or 0) if res else 0,
+                    'detections_this_month': int(res['this_month'] or 0) if res else 0,
+                    'last_detection_time': 'Never'
+                }
+                
+                if res and res['last_time']:
+                    stats['last_detection_time'] = res['last_time'].strftime('%Y-%m-%d %H:%M:%S')
+                    
+                return stats
         except Exception as e:
-            print(f"Error getting total detections: {e}")
-            return 0
-
-    def get_verified_detections_count(self) -> int:
-        """Get count of verified detections"""
-        try:
-            with DatabaseConnection() as db:
-                db.execute("SELECT COUNT(*) as count FROM detections WHERE verification_status = 'VERIFIED'")
-                result = db.fetchone()
-                return result['count'] if result else 0
-        except Exception as e:
-            print(f"Error getting verified detections count: {e}")
-            return 0
-
-    def get_not_verified_detections_count(self) -> int:
-        """Get count of not verified detections"""
-        try:
-            with DatabaseConnection() as db:
-                db.execute("SELECT COUNT(*) as count FROM detections WHERE verification_status = 'NOT_VERIFIED'")
-                result = db.fetchone()
-                return result['count'] if result else 0
-        except Exception as e:
-            print(f"Error getting not verified detections count: {e}")
-            return 0
-
-    def get_detections_today(self) -> int:
-        """Get detections count for today"""
-        try:
-            with DatabaseConnection() as db:
-                today = datetime.now().date()
-                db.execute("SELECT COUNT(*) as count FROM detections WHERE DATE(timestamp) = %s", (today,))
-                result = db.fetchone()
-                return result['count'] if result else 0
-        except Exception as e:
-            print(f"Error getting today's detections: {e}")
-            return 0
-
-    def get_detections_this_week(self) -> int:
-        """Get detections count for this week"""
-        try:
-            with DatabaseConnection() as db:
-                today = datetime.now()
-                start_of_week = today - timedelta(days=today.weekday())
-                db.execute("SELECT COUNT(*) as count FROM detections WHERE DATE(timestamp) >= %s", (start_of_week.date(),))
-                result = db.fetchone()
-                return result['count'] if result else 0
-        except Exception as e:
-            print(f"Error getting this week's detections: {e}")
-            return 0
-
-    def get_detections_this_month(self) -> int:
-        """Get detections count for this month"""
-        try:
-            with DatabaseConnection() as db:
-                this_month = datetime.now().strftime('%Y-%m')
-                db.execute("SELECT COUNT(*) as count FROM detections WHERE DATE_FORMAT(timestamp, '%%Y-%%m') = %s", (this_month,))
-                result = db.fetchone()
-                return result['count'] if result else 0
-        except Exception as e:
-            print(f"Error getting this month's detections: {e}")
-            return 0
-
-    def get_last_detection_time(self) -> str:
-        """Get timestamp of last detection"""
-        try:
-            with DatabaseConnection() as db:
-                db.execute("SELECT timestamp FROM detections ORDER BY timestamp DESC LIMIT 1")
-                result = db.fetchone()
-                if result and result['timestamp']:
-                    return result['timestamp'].strftime('%Y-%m-%d %H:%M:%S')
-                return 'Never'
-        except Exception as e:
-            print(f"Error getting last detection time: {e}")
-            return 'Unknown'
+            print(f"Error getting total stats: {e}")
+            return {
+                'total_detections': 0, 'verified_detections': 0, 'not_verified_detections': 0,
+                'detections_today': 0, 'detections_this_week': 0, 'detections_this_month': 0,
+                'last_detection_time': 'Never'
+            }
 
 # Global monitor instance
 monitor = ANPRSystemMonitor()
@@ -332,19 +291,49 @@ def get_recent_detections():
             'error': str(e)
         }), 500
 
+@api_bridge_bp.route('/api/dashboard-sync')
+def dashboard_sync():
+    """Consolidated endpoint for dashboard sync with ETag caching"""
+    try:
+        status = monitor.get_system_status()
+        camera_stats = monitor.get_camera_stats()
+        if camera_stats:
+            status['enabled_cameras'] = camera_stats.get('enabled_cameras', 0)
+            status['total_cameras'] = camera_stats.get('total_cameras', 0)
+            status['active_cameras'] = camera_stats.get('enabled_cameras', 0)
+            
+        stats = monitor.get_all_detection_stats()
+        recent = monitor.get_recent_detections(10)
+        
+        response_data = {
+            'success': True,
+            'status': status,
+            'stats': stats,
+            'recent_detections': recent
+        }
+        
+        response_json = json.dumps(response_data, sort_keys=True).encode('utf-8')
+        etag = hashlib.md5(response_json).hexdigest()
+        
+        if request.headers.get('If-None-Match') == etag:
+            from flask import Response
+            return Response(status=304)
+            
+        response = jsonify(response_data)
+        response.headers['ETag'] = etag
+        return response
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
 @api_bridge_bp.route('/api/detections/stats')
 def get_detection_stats():
     """Get detection statistics"""
     try:
-        stats = {
-            'total_detections': monitor.get_total_detections(),
-            'verified_detections': monitor.get_verified_detections_count(),
-            'not_verified_detections': monitor.get_not_verified_detections_count(),
-            'last_detection_time': monitor.get_last_detection_time(),
-            'detections_today': monitor.get_detections_today(),
-            'detections_this_week': monitor.get_detections_this_week(),
-            'detections_this_month': monitor.get_detections_this_month()
-        }
+        stats = monitor.get_all_detection_stats()
         
         return jsonify({
             'success': True,

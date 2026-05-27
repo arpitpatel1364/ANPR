@@ -163,9 +163,7 @@ INDIAN_PLATE_REGEX = re.compile(
 #  - 1 optional global display thread (grid visualization)
 # ============================================================================
 
-# Global frame queue - shared by all cameras
-# Keep this small to avoid processing stale frames when load spikes.
-global_frame_queue = queue.Queue(maxsize=20)
+# Removed global_frame_queue in favor of per-camera queues
 
 # Global ThreadPool for API calls to prevent thread bloat
 api_thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=5)
@@ -222,6 +220,11 @@ class CameraProcessor:
         self.current_processed_frame = None
         self.frame_count = 0
         self.start_time = time.time()
+        
+        # Optimization 2: Per-camera queue (size 1)
+        self.frame_queue = queue.Queue(maxsize=1)
+        # Optimization 1: Throttle frame ingestion
+        self.last_put_time = 0.0
 
         # Optional Region Of Interest (ROI) for this camera
         self.roi = None
@@ -915,26 +918,31 @@ class CameraProcessor:
                             self.frame_count += 1
                             frame_copy = frame.copy()
                             
-                            # Put frame on global queue with camera metadata
-                            try:
-                                global_frame_queue.put_nowait({
-                                    'frame': frame_copy,
-                                    'camera_id': self.camera_id,
-                                    'camera_processor': self,
-                                    'frame_number': self.frame_count
-                                })
-                            except queue.Full:
-                                # Queue full, drop oldest frame
+                            # Optimization 1: Throttle frame ingestion (2 FPS = 0.5s per frame)
+                            current_time = time.time()
+                            if current_time - self.last_put_time > 0.5:
+                                self.last_put_time = current_time
+                                
+                                # Optimization 2: Put frame on per-camera queue
                                 try:
-                                    global_frame_queue.get_nowait()
-                                    global_frame_queue.put_nowait({
+                                    self.frame_queue.put_nowait({
                                         'frame': frame_copy,
                                         'camera_id': self.camera_id,
                                         'camera_processor': self,
                                         'frame_number': self.frame_count
                                     })
-                                except queue.Empty:
-                                    pass
+                                except queue.Full:
+                                    # Queue full, drop oldest frame
+                                    try:
+                                        self.frame_queue.get_nowait()
+                                        self.frame_queue.put_nowait({
+                                            'frame': frame_copy,
+                                            'camera_id': self.camera_id,
+                                            'camera_processor': self,
+                                            'frame_number': self.frame_count
+                                        })
+                                    except queue.Empty:
+                                        pass
 
                             # Save periodic ROI fallback snapshot for admin panel ROI editor fallback
                             try:
@@ -1331,6 +1339,10 @@ class CameraProcessor:
 
             if isinstance(full_frame_annotated, np.ndarray):
                 cv2.imwrite(full_annotated_path, full_frame_annotated, [cv2.IMWRITE_WEBP_QUALITY, 80])
+                # Generate thumbnail
+                thumb_path = full_annotated_path.replace('_ann.webp', '_ann_thumb.webp')
+                thumb = cv2.resize(full_frame_annotated, (140, 80))
+                cv2.imwrite(thumb_path, thumb, [cv2.IMWRITE_WEBP_QUALITY, 70])
 
             urls = {
                 'image_full_annotated': f"/static/images/detections/full_annotated/{full_annotated_name}",
@@ -1403,71 +1415,90 @@ class CameraProcessor:
 # GLOBAL PROCESSOR THREAD: Consumes frames from global queue and processes them
 # ============================================================================
 
+def process_frame_task(frame_data):
+    """
+    Task to process a single frame using the camera processor
+    """
+    try:
+        frame = frame_data['frame']
+        camera_id = frame_data['camera_id']
+        camera_processor = frame_data['camera_processor']
+        frame_number = frame_data['frame_number']
+
+        # per-camera throttle
+        now = time.time()
+        last_t = _last_processed_time.get(camera_id, 0)
+        if now - last_t < MIN_PROCESS_INTERVAL:
+            camera_processor.current_processed_frame = frame
+            return
+        _last_processed_time[camera_id] = now
+
+        # Process every Nth frame to limit FPS
+        if PROCESS_EVERY_NTH_FRAME > 1 and frame_number % PROCESS_EVERY_NTH_FRAME != 0:
+            camera_processor.current_processed_frame = frame
+            return
+
+        # Process the frame
+        processed_frame, detected_texts = camera_processor.process_frame(frame, frame_number)
+        
+        # Store processed frame back in camera processor for display
+        camera_processor.current_processed_frame = processed_frame
+
+        if detected_texts:
+            if camera_processor.headless_mode:
+                logging.info(f"[{camera_processor.name}] Detected plates: {detected_texts}")
+            else:
+                print(f"📹 [{camera_processor.name}] Detected plates: {detected_texts}")
+
+            # Save frame in headless mode if enabled
+            if camera_processor.headless_mode and camera_processor.save_frames and detected_texts:
+                current_time = time.time()
+                if current_time - camera_processor.last_frame_save >= camera_processor.frame_save_interval:
+                    camera_processor.save_detection_frame(processed_frame, detected_texts)
+                    camera_processor.last_frame_save = current_time
+    except Exception as e:
+        print(f"❌ Error in process_frame_task: {e}")
+
+# Global ThreadPool for frame processing
+# Optimization 3: Set max_workers = 3 to reduce context switching
+processor_pool = concurrent.futures.ThreadPoolExecutor(max_workers=3)
+
 def global_frame_processor():
     """
-    THE GLOBAL PROCESSOR THREAD (1 thread for all cameras)
-    - Consumes frames from global_frame_queue
-    - Processes every 2nd frame (alternate frames) to limit FPS
-    - Runs YOLO/OCR on each selected frame (no lock contention!)
-    - Stores processed frame back in camera object
+    THE GLOBAL PROCESSOR THREAD (1 thread to dispatch to ThreadPool)
+    - Consumes frames from per-camera queues via round-robin
+    - Submits frames to the ThreadPoolExecutor for parallel processing
     """
-    global stop_processing
+    global stop_processing, cameras_dict
 
     while not stop_processing:
-        try:
-            # Get one frame, then drain backlog to keep only the freshest frame.
-            frame_data = global_frame_queue.get(timeout=0.1)
-            while True:
-                try:
-                    frame_data = global_frame_queue.get_nowait()
-                except queue.Empty:
-                    break
-
-            frame = frame_data['frame']
-            camera_id = frame_data['camera_id']
-            camera_processor = frame_data['camera_processor']
-            frame_number = frame_data['frame_number']
-
-            # ============================================================================
-            # per-camera throttle in global_frame_processor function
-            # ============================================================================
-            now = time.time()
-            last_t = _last_processed_time.get(camera_id, 0)
-            if now - last_t < MIN_PROCESS_INTERVAL:
-                frame_data['camera_processor'].current_processed_frame = frame_data['frame']
-                continue
-            _last_processed_time[camera_id] = now
-
-            # Process every Nth frame to limit FPS (configurable via frame_skip).
-            if PROCESS_EVERY_NTH_FRAME > 1 and frame_number % PROCESS_EVERY_NTH_FRAME != 0:
-                # Keep display/live preview fresh even when inference is skipped.
-                camera_processor.current_processed_frame = frame
-                continue
-
-            # Process the frame
-            processed_frame, detected_texts = camera_processor.process_frame(frame, frame_number)
+        if not cameras_dict:
+            time.sleep(0.1)
+            continue
             
-            # Store processed frame back in camera processor for display
-            camera_processor.current_processed_frame = processed_frame
-
-            if detected_texts:
-                if camera_processor.headless_mode:
-                    logging.info(f"[{camera_processor.name}] Detected plates: {detected_texts}")
-                else:
-                    print(f"📹 [{camera_processor.name}] Detected plates: {detected_texts}")
-
-                # Save frame in headless mode if enabled
-                if camera_processor.headless_mode and camera_processor.save_frames and detected_texts:
-                    current_time = time.time()
-                    if current_time - camera_processor.last_frame_save >= camera_processor.frame_save_interval:
-                        camera_processor.save_detection_frame(processed_frame, detected_texts)
-                        camera_processor.last_frame_save = current_time
-
-        except queue.Empty:
-            continue
-        except Exception as e:
-            print(f"❌ Error in global frame processor: {e}")
-            continue
+        processed_any = False
+        
+        # Optimization 2: Round-robin scheduler
+        for cam_id, camera_processor in list(cameras_dict.items()):
+            if stop_processing:
+                break
+                
+            if not camera_processor.enabled:
+                continue
+                
+            try:
+                # Non-blocking get from this camera's queue
+                frame_data = camera_processor.frame_queue.get_nowait()
+                processor_pool.submit(process_frame_task, frame_data)
+                processed_any = True
+            except queue.Empty:
+                pass
+            except Exception as e:
+                print(f"❌ Error in global frame processor dispatcher for camera {cam_id}: {e}")
+                
+        # If no frames were processed across all cameras, sleep briefly
+        if not processed_any:
+            time.sleep(0.01)
 
 
 # ============================================================================

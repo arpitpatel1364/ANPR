@@ -30,10 +30,12 @@ def safe_float(value, default=0.0):
         return default
 
 camera_bp = Blueprint('camera', __name__)
+import threading
+import time
 
-
-
-
+_CAMERA_STATUS_CACHE = {}
+_CAMERA_STATUS_LAST_UPDATE = 0
+_CAMERA_STATUS_LOCK = threading.Lock()
 def parse_roi_from_form(form):
     """Parse ROI bounding box values from the submitted form."""
     try:
@@ -306,15 +308,37 @@ def get_camera_status_endpoint(camera_id):
 @camera_bp.route('/cameras/status/all')
 def get_all_cameras_status():
     """Get status for all cameras"""
+    global _CAMERA_STATUS_LAST_UPDATE
     config = load_config_from_db()
     cameras = config.get('cameras', []) if config else []
     
+    with _CAMERA_STATUS_LOCK:
+        current_time = time.time()
+        if current_time - _CAMERA_STATUS_LAST_UPDATE < 30 and 'all' in _CAMERA_STATUS_CACHE:
+            return jsonify({
+                'success': True,
+                'data': _CAMERA_STATUS_CACHE['all'],
+                'timestamp': datetime.now().isoformat()
+            })
+            
     try:
+        import concurrent.futures
         all_status = []
-        for camera in cameras:
-            status = get_camera_status(camera)
-            all_status.append(status)
         
+        # Parallelize camera status checks since they are IO-bound and slow
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(10, len(cameras) or 1)) as executor:
+            future_to_cam = {executor.submit(get_camera_status, cam): cam for cam in cameras}
+            for future in concurrent.futures.as_completed(future_to_cam):
+                try:
+                    status = future.result()
+                    all_status.append(status)
+                except Exception as exc:
+                    print(f"Camera status check generated an exception: {exc}")
+        
+        with _CAMERA_STATUS_LOCK:
+            _CAMERA_STATUS_CACHE['all'] = all_status
+            _CAMERA_STATUS_LAST_UPDATE = time.time()
+            
         return jsonify({
             'success': True,
             'data': all_status,
