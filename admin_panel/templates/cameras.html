@@ -629,14 +629,14 @@ document.addEventListener('DOMContentLoaded', function() {
 
 // Start polling for camera status updates
 function startCameraStatusPolling() {
-    // Poll every 10 seconds
+    // Poll every 60 seconds to avoid unnecessary API calls
     if (cameraStatusInterval) {
         clearInterval(cameraStatusInterval);
     }
     
     cameraStatusInterval = setInterval(() => {
         refreshAllCamerasStatus();
-    }, 10000); // 10 seconds
+    }, 60000); // 60 seconds
 }
 
 // Refresh status for all cameras

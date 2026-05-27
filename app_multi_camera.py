@@ -1457,13 +1457,58 @@ class CameraProcessor:
 # GLOBAL PROCESSOR THREAD: Consumes frames from global queue and processes them
 # ============================================================================
 
+def process_frame_task(frame_data):
+    """
+    Task to process a single frame using the camera processor
+    """
+    try:
+        frame = frame_data['frame']
+        camera_id = frame_data['camera_id']
+        camera_processor = frame_data['camera_processor']
+        frame_number = frame_data['frame_number']
+
+        # per-camera throttle
+        now = time.time()
+        last_t = _last_processed_time.get(camera_id, 0)
+        if now - last_t < MIN_PROCESS_INTERVAL:
+            camera_processor.current_processed_frame = frame
+            return
+        _last_processed_time[camera_id] = now
+
+        # Process every Nth frame to limit FPS
+        if PROCESS_EVERY_NTH_FRAME > 1 and frame_number % PROCESS_EVERY_NTH_FRAME != 0:
+            camera_processor.current_processed_frame = frame
+            return
+
+        # Process the frame
+        processed_frame, detected_texts = camera_processor.process_frame(frame, frame_number)
+        
+        # Store processed frame back in camera processor for display
+        camera_processor.current_processed_frame = processed_frame
+
+        if detected_texts:
+            if camera_processor.headless_mode:
+                logging.info(f"[{camera_processor.name}] Detected plates: {detected_texts}")
+            else:
+                print(f"📹 [{camera_processor.name}] Detected plates: {detected_texts}")
+
+            # Save frame in headless mode if enabled
+            if camera_processor.headless_mode and camera_processor.save_frames and detected_texts:
+                current_time = time.time()
+                if current_time - camera_processor.last_frame_save >= camera_processor.frame_save_interval:
+                    camera_processor.save_detection_frame(processed_frame, detected_texts)
+                    camera_processor.last_frame_save = current_time
+    except Exception as e:
+        print(f"❌ Error in process_frame_task: {e}")
+
+# Global ThreadPool for frame processing
+processor_pool = concurrent.futures.ThreadPoolExecutor(max_workers=4)
+
 def global_frame_processor():
     """
-    THE GLOBAL PROCESSOR THREAD (1 thread for all cameras)
+    THE GLOBAL PROCESSOR THREAD (1 thread to dispatch to ThreadPool)
     - Consumes frames from global_frame_queue
-    - Processes every 2nd frame (alternate frames) to limit FPS
-    - Runs YOLO/OCR on each selected frame (no lock contention!)
-    - Stores processed frame back in camera object
+    - Submits frames to the ThreadPoolExecutor for parallel processing
     """
     global stop_processing
 
@@ -1477,50 +1522,13 @@ def global_frame_processor():
                 except queue.Empty:
                     break
 
-            frame = frame_data['frame']
-            camera_id = frame_data['camera_id']
-            camera_processor = frame_data['camera_processor']
-            frame_number = frame_data['frame_number']
-
-            # ============================================================================
-            # per-camera throttle in global_frame_processor function
-            # ============================================================================
-            now = time.time()
-            last_t = _last_processed_time.get(camera_id, 0)
-            if now - last_t < MIN_PROCESS_INTERVAL:
-                frame_data['camera_processor'].current_processed_frame = frame_data['frame']
-                continue
-            _last_processed_time[camera_id] = now
-
-            # Process every Nth frame to limit FPS (configurable via frame_skip).
-            if PROCESS_EVERY_NTH_FRAME > 1 and frame_number % PROCESS_EVERY_NTH_FRAME != 0:
-                # Keep display/live preview fresh even when inference is skipped.
-                camera_processor.current_processed_frame = frame
-                continue
-
-            # Process the frame
-            processed_frame, detected_texts = camera_processor.process_frame(frame, frame_number)
-            
-            # Store processed frame back in camera processor for display
-            camera_processor.current_processed_frame = processed_frame
-
-            if detected_texts:
-                if camera_processor.headless_mode:
-                    logging.info(f"[{camera_processor.name}] Detected plates: {detected_texts}")
-                else:
-                    print(f"📹 [{camera_processor.name}] Detected plates: {detected_texts}")
-
-                # Save frame in headless mode if enabled
-                if camera_processor.headless_mode and camera_processor.save_frames and detected_texts:
-                    current_time = time.time()
-                    if current_time - camera_processor.last_frame_save >= camera_processor.frame_save_interval:
-                        camera_processor.save_detection_frame(processed_frame, detected_texts)
-                        camera_processor.last_frame_save = current_time
+            # Submit to ThreadPool instead of processing sequentially
+            processor_pool.submit(process_frame_task, frame_data)
 
         except queue.Empty:
             continue
         except Exception as e:
-            print(f"❌ Error in global frame processor: {e}")
+            print(f"❌ Error in global frame processor dispatcher: {e}")
             continue
 
 

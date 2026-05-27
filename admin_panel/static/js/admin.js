@@ -260,6 +260,9 @@ function updateConnectionStatus(status, message) {
     } else if (status === 'error') {
         document.title = `[Connection Error] ${originalTitle}`;
     }
+    
+    // Update live indicator based on connection status
+    showLiveUpdateIndicator();
 }
 
 // Start connection health check
@@ -885,13 +888,20 @@ function refreshCamerasLive() {
 function showLiveUpdateIndicator() {
     const indicator = document.getElementById('liveIndicator');
     if (indicator) {
-        indicator.style.display = 'inline-block';
-        indicator.classList.add('pulse');
+        const icon = indicator.querySelector('i');
+        const textElement = indicator.querySelector('span');
         
-        setTimeout(() => {
-            indicator.style.display = 'none';
+        if (typeof connectionStatus !== 'undefined' && connectionStatus !== 'connected') {
+            if (icon) icon.className = 'bi bi-circle-fill text-danger';
+            if (textElement) textElement.textContent = 'Offline';
+            indicator.style.display = 'inline-block';
             indicator.classList.remove('pulse');
-        }, 2000);
+        } else {
+            if (icon) icon.className = 'bi bi-circle-fill text-success';
+            if (textElement) textElement.textContent = 'Live';
+            indicator.style.display = 'inline-block';
+            indicator.classList.add('pulse');
+        }
     }
 }
 
@@ -951,39 +961,29 @@ function refreshLiveData() {
     }
 }
 
+let lastDashboardETag = null;
+
 // Fallback function to refresh data via API calls
 function refreshDataViaAPI() {
-    // Update system status
-    fetch('/api/system/status')
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                updateSystemStatus(data.data);
-            }
-        })
-        .catch(error => console.error('Error updating system status:', error));
-    
-    // Update camera stats
-    fetch('/api/cameras/stats')
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                updateCameraStatus({ cameras: data.data.cameras });
-            }
-        })
-        .catch(error => console.error('Error updating camera stats:', error));
-    
-    // Update recent detections
-    fetch('/api/detections/recent?limit=10')
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                updateDetectionFeed({ detections: data.data, count: data.count });
-            }
-        })
-        .catch(error => console.error('Error updating detections:', error));
-    
-    // Don't show notification for routine API refresh
+    fetch('/api/dashboard-sync', {
+        headers: lastDashboardETag ? { 'If-None-Match': lastDashboardETag } : {}
+    })
+    .then(response => {
+        if (response.status === 304) return null; // nothing changed
+        lastDashboardETag = response.headers.get('ETag');
+        return response.json();
+    })
+    .then(data => {
+        if (!data || !data.success) return;
+        
+        if (data.status) updateSystemStatus(data.status);
+        if (data.status && data.status.cameras) updateCameraStatus({ cameras: Object.values(data.status.cameras) });
+        if (data.recent_detections) {
+            updateDetectionFeed({ detections: data.recent_detections, count: data.recent_detections.length });
+            refreshRecentDetectionsTable(data.recent_detections);
+        }
+    })
+    .catch(error => console.error('Error updating dashboard sync:', error));
 }
 
 // ANPR Service Control Functions
@@ -1096,49 +1096,67 @@ function disableAllCameras() {
 
 // -----------------------------------------------------------------------
 // refreshRecentDetectionsTable — updates the dashboard static table live
-// Uses smart diffing to avoid full DOM replacement (eliminates flash/glitch)
+// Uses incremental DOM updates to avoid flash/glitch and memory leaks
 // -----------------------------------------------------------------------
+
+
 function refreshRecentDetectionsTable(detections) {
     const tbody = document.querySelector('#recent-detections-tbody');
     if (!tbody || !detections || detections.length === 0) return;
 
-    // Build a fingerprint of the new data (first plate + count)
-    const newFingerprint = (detections[0]?.plate || '') + '|' + detections.length;
-    const oldFingerprint = tbody.dataset.fingerprint || '';
-
-    // Skip DOM update entirely if data hasn't changed — no flicker, no work
-    if (newFingerprint === oldFingerprint) return;
-
-    // Build new HTML
-    const newHtml = detections.slice(0, 10).map(d => {
+    const lastSeenTs = tbody.dataset.lastTimestamp || '0';
+    
+    // Filter to only new detections and reverse so we prepend in correct chronological order
+    const newDetections = detections.filter(d => (d.timestamp || '') > lastSeenTs).reverse();
+    
+    if (newDetections.length === 0) return;
+    
+    newDetections.forEach(d => {
+        const tr = document.createElement('tr');
         const ts = d.timestamp ? new Date(d.timestamp).toLocaleString() : '-';
         const plate = d.plate || '-';
         const status = d.verification_status || '-';
         const camera = d.camera || '-';
         const conf = d.confidence ? parseFloat(d.confidence).toFixed(1) + '%' : '-';
         const badgeClass = status === 'VERIFIED' ? 'bg-success-gradient' : 'bg-warning-gradient';
-        const imgHtml = d.image_full_annotated
-            ? `<img src="${d.image_full_annotated}" alt="Plate" style="width:70px;height:40px;object-fit:cover;border-radius:6px;cursor:pointer;" onclick="showImagePreview('${d.image_full_annotated}', 'Annotated Frame')">`
-            : '<i class="bi bi-image text-muted"></i>';
-        return `<tr>
+        
+        const imgUrl = d.thumbnail_url || d.image_full_annotated;
+        const fullImgUrl = d.image_full_annotated || '';
+        
+        let imgHtml = '<i class="bi bi-image text-muted"></i>';
+        if (imgUrl) {
+            imgHtml = `<img src="${imgUrl}" alt="Plate" loading="lazy" style="width:70px;height:40px;object-fit:cover;border-radius:6px;cursor:pointer;">`;
+        }
+        
+        tr.innerHTML = `
             <td><small class="text-muted">${ts}</small></td>
             <td><span class="fw-bold">${plate}</span></td>
             <td><span class="badge badge-modern ${badgeClass}">${status}</span></td>
             <td><small>${camera}</small></td>
             <td><span class="badge badge-modern badge-info">${conf}</span></td>
             <td>${imgHtml}</td>
-        </tr>`;
-    }).join('');
-
-    // Smooth fade-out → update → fade-in to avoid a hard flash
-    tbody.style.transition = 'opacity 0.15s ease';
-    tbody.style.opacity = '0';
-    setTimeout(() => {
-        tbody.innerHTML = newHtml;
-        tbody.dataset.fingerprint = newFingerprint;
-        tbody.style.opacity = '1';
-        if (typeof processDynamicCrops === 'function') processDynamicCrops();
-    }, 150);
+        `;
+        
+        const img = tr.querySelector('img');
+        if (img && fullImgUrl) {
+            img.addEventListener('click', () => {
+                if (typeof showImagePreview === 'function') {
+                    showImagePreview(fullImgUrl, 'Annotated Frame');
+                }
+            });
+        }
+        
+        tbody.prepend(tr);
+        
+        // Keep only top 10 rows
+        while (tbody.rows.length > 10) {
+            tbody.lastElementChild.remove();
+        }
+    });
+    
+    // Update last seen timestamp
+    tbody.dataset.lastTimestamp = detections[0].timestamp || '0';
+    if (typeof processDynamicCrops === 'function') processDynamicCrops();
 }
 
 
@@ -1234,10 +1252,10 @@ function startPeriodicRefresh() {
         clearInterval(refreshInterval);
     }
     
-    // Refresh every 5 seconds
+    // Refresh every 10 seconds
     refreshInterval = setInterval(() => {
         refreshDataViaAPI();
-    }, 5000);
+    }, 10000);
     
     console.log('Periodic refresh started');
 }

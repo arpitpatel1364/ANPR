@@ -4,28 +4,39 @@ import time
 from datetime import datetime
 from typing import List, Dict, Optional
 import threading
+import queue
 from db_connection import get_connection, DatabaseConnection, execute_query, initialize_database
+
+_PLATE_CACHE = {}         # { plate: (is_allowed, timestamp) }
+_CACHE_TTL = 30           # seconds
+_cache_lock = threading.Lock()
 
 def is_plate_allowed(plate: str) -> bool:
     """
-    Check if a license plate is in the allowed list by querying database directly.
-    Always returns current state without needing to reload or maintain in-memory copy.
-    
-    Args:
-        plate (str): License plate to verify (can be with spaces)
-        
-    Returns:
-        bool: True if plate is allowed, False otherwise
+    Check if a license plate is in the allowed list using Hybrid Cache.
     """
     try:
-        # Clean the plate (remove spaces, convert to uppercase)
         clean_plate = plate.replace(" ", "").upper()
+        current_time = time.time()
         
-        # Query database directly
+        # Check cache
+        with _cache_lock:
+            if clean_plate in _PLATE_CACHE:
+                is_allowed, timestamp = _PLATE_CACHE[clean_plate]
+                if current_time - timestamp < _CACHE_TTL:
+                    return is_allowed
+        
+        # Query database directly if not in cache
         with DatabaseConnection() as db:
             db.execute("SELECT id FROM allowed_plates WHERE license_plate = %s LIMIT 1", (clean_plate,))
             result = db.fetchone()
-            return result is not None
+            is_allowed = result is not None
+            
+        # Update cache
+        with _cache_lock:
+            _PLATE_CACHE[clean_plate] = (is_allowed, current_time)
+            
+        return is_allowed
     except Exception as e:
         print(f"⚠️ Error checking plate {plate}: {e}")
         return False
@@ -50,11 +61,66 @@ class PlateLogger:
         # Track recent detections to prevent duplicates
         self.recent_detections = {}  # plate -> (timestamp, confidence, count)
         
+        # Async Database worker
+        self.db_queue = queue.Queue()
+        self.db_worker_thread = threading.Thread(target=self._database_worker, daemon=True)
+        self.db_worker_thread.start()
+        
+        # Active detection counter
+        self.active_detections_count = 0
+        
         # Initialize database connection
         self.init_database()
         
         # Load allowed plates from database (fallback to JSON if needed)
         self.load_allowed_plates()
+        
+        # Start background refresh thread for cache
+        self.refresh_thread = threading.Thread(target=self._refresh_plates_worker, daemon=True)
+        self.refresh_thread.start()
+        
+    def _refresh_plates_worker(self):
+        """Background thread to refresh the allowed plates cache every 60s"""
+        while True:
+            try:
+                time.sleep(60)
+                with DatabaseConnection() as db:
+                    db.execute("SELECT license_plate FROM allowed_plates")
+                    rows = db.fetchall()
+                    
+                new_cache = {}
+                curr_time = time.time()
+                for r in rows:
+                    new_cache[r['license_plate']] = (True, curr_time)
+                    
+                with _cache_lock:
+                    global _PLATE_CACHE
+                    _PLATE_CACHE.clear()
+                    _PLATE_CACHE.update(new_cache)
+            except Exception as e:
+                print(f"⚠️ Error refreshing plate cache: {e}")
+    
+    def _database_worker(self):
+        """Dedicated background thread to handle database writes asynchronously"""
+        while True:
+            try:
+                task = self.db_queue.get()
+                if task is None:
+                    break
+                
+                query, params, clean_plate, status_icon, verification_status, access_granted, reason = task
+                
+                try:
+                    with DatabaseConnection() as db:
+                        db.execute(query, params)
+                    print(f"{status_icon} Plate {clean_plate}: {verification_status} - Access: {access_granted} - LOGGED ({reason})")
+                except Exception as e:
+                    print(f"❌ Error logging detection to database (async): {e}")
+                    print(f"{status_icon} Plate {clean_plate}: {verification_status} - Access: {access_granted} - LOGGED (but DB error)")
+                
+                self.db_queue.task_done()
+            except Exception as e:
+                print(f"❌ Error in database worker thread: {e}")
     
     def init_database(self):
         """Initialize database connection and tables"""
@@ -169,6 +235,7 @@ class PlateLogger:
         
         # New detection or outside dedup window - log it
         self.recent_detections[clean_plate] = (current_time, confidence, 1)
+        self.active_detections_count += 1
         return True, "New detection or outside dedup window"
     
     def cleanup_old_detections(self):
@@ -182,6 +249,7 @@ class PlateLogger:
         
         for plate in old_plates:
             del self.recent_detections[plate]
+            self.active_detections_count = max(0, self.active_detections_count - 1)
     
     def log_detection(self, 
                      plate: str, 
@@ -222,39 +290,40 @@ class PlateLogger:
                 # Get detection count for this plate
                 detection_count = self.recent_detections.get(clean_plate, (0, 0, 0))[2]
                 
-                # Insert into MySQL database
+                # Insert into MySQL database via Async Queue
                 try:
-                    with DatabaseConnection() as db:
-                        query = """
-                            INSERT INTO detections 
-                            (timestamp, license_plate, verification_status, access_granted, 
-                             detection_confidence, processing_time_ms, camera_source, frame_number, 
-                             detection_count, log_reason, image_full_annotated, bbox_x1, bbox_y1, bbox_x2, bbox_y2)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                        """
-                        params = (
-                            timestamp,
-                            clean_plate,
-                            verification['verification_status'],
-                            verification['access_granted'],
-                            detection_confidence,
-                            processing_time_ms,
-                            camera_source,
-                            frame_number,
-                            detection_count,
-                            reason,
-                            image_full_annotated or None,
-                            bbox_x1,
-                            bbox_y1,
-                            bbox_x2,
-                            bbox_y2
-                        )
-                        db.execute(query, params)
+                    query = """
+                        INSERT INTO detections 
+                        (timestamp, license_plate, verification_status, access_granted, 
+                         detection_confidence, processing_time_ms, camera_source, frame_number, 
+                         detection_count, log_reason, image_full_annotated, bbox_x1, bbox_y1, bbox_x2, bbox_y2)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """
+                    params = (
+                        timestamp,
+                        clean_plate,
+                        verification['verification_status'],
+                        verification['access_granted'],
+                        detection_confidence,
+                        processing_time_ms,
+                        camera_source,
+                        frame_number,
+                        detection_count,
+                        reason,
+                        image_full_annotated or None,
+                        bbox_x1,
+                        bbox_y1,
+                        bbox_x2,
+                        bbox_y2
+                    )
                     
-                    print(f"{status_icon} Plate {clean_plate}: {verification['verification_status']} - Access: {verification['access_granted']} - LOGGED ({reason})")
+                    self.db_queue.put((
+                        query, params, clean_plate, status_icon, 
+                        verification['verification_status'], 
+                        verification['access_granted'], reason
+                    ))
                 except Exception as e:
-                    print(f"❌ Error logging detection to database: {e}")
-                    print(f"{status_icon} Plate {clean_plate}: {verification['verification_status']} - Access: {verification['access_granted']} - LOGGED (but DB error)")
+                    print(f"❌ Error queuing detection to database: {e}")
             else:
                 # Just print detection info without logging
                 detection_count = self.recent_detections.get(clean_plate, (0, 0, 0))[2]
@@ -274,39 +343,28 @@ class PlateLogger:
         """Get statistics from the database and memory"""
         try:
             # Get in-memory statistics (current session)
-            current_time = time.time()
-            active_detections = 0
-            total_detection_count = 0
-            
-            for plate, (timestamp, confidence, count) in self.recent_detections.items():
-                if current_time - timestamp < self.dedup_window * 2:
-                    active_detections += 1
-                    total_detection_count += count
+            total_detection_count = sum(count for _, _, count in self.recent_detections.values())
             
             # Get database statistics
             db_stats = {"total_detections": 0, "verified_plates": 0, "unverified_plates": 0, "unique_plates": 0}
             
             try:
                 with DatabaseConnection() as db:
-                    # Total detections
-                    db.execute("SELECT COUNT(*) as count FROM detections")
+                    # Execute single aggregation query instead of sequential queries
+                    db.execute("""
+                        SELECT 
+                            COUNT(*) as total,
+                            SUM(verification_status = 'VERIFIED') as verified,
+                            SUM(verification_status = 'NOT_VERIFIED') as unverified,
+                            COUNT(DISTINCT license_plate) as unique_plates
+                        FROM detections
+                    """)
                     result = db.fetchone()
-                    db_stats['total_detections'] = result['count'] if result else 0
-                    
-                    # Verified detections
-                    db.execute("SELECT COUNT(*) as count FROM detections WHERE verification_status = 'VERIFIED'")
-                    result = db.fetchone()
-                    db_stats['verified_plates'] = result['count'] if result else 0
-                    
-                    # Unverified detections
-                    db.execute("SELECT COUNT(*) as count FROM detections WHERE verification_status = 'NOT_VERIFIED'")
-                    result = db.fetchone()
-                    db_stats['unverified_plates'] = result['count'] if result else 0
-                    
-                    # Unique plates
-                    db.execute("SELECT COUNT(DISTINCT license_plate) as count FROM detections")
-                    result = db.fetchone()
-                    db_stats['unique_plates'] = result['count'] if result else 0
+                    if result:
+                        db_stats['total_detections'] = result['total'] or 0
+                        db_stats['verified_plates'] = result['verified'] or 0
+                        db_stats['unverified_plates'] = result['unverified'] or 0
+                        db_stats['unique_plates'] = result['unique_plates'] or 0
             except Exception as db_e:
                 print(f"Warning: Error getting database statistics: {db_e}")
             
@@ -320,7 +378,7 @@ class PlateLogger:
                 'unverified_plates': db_stats['unverified_plates'],
                 'unique_plates': db_stats['unique_plates'],
                 'verification_rate': verification_rate,
-                'active_detections': active_detections,
+                'active_detections': self.active_detections_count,
                 'total_detection_count': total_detection_count,
                 'dedup_window': self.dedup_window,
                 'confidence_threshold': self.max_confidence_threshold
