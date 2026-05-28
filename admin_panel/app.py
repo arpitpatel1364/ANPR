@@ -21,7 +21,7 @@ from api_bridge import api_bridge_bp
 from anpr_interface import anpr_interface
 from settings import settings_bp
 from websocket_server import register_websocket_events, set_socketio
-from config_db import load_config_from_db
+from scripts.config_db import load_config_from_db
 
 app = Flask(__name__)
 app.secret_key = 'anpr_admin_secret_key_2024'

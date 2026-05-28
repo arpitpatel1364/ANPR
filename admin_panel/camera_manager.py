@@ -4,7 +4,7 @@ import os
 import subprocess
 from datetime import datetime
 from camera_status import get_camera_status
-from config_db import (
+from scripts.config_db import (
     load_config_from_db,
     add_camera_to_db,
     update_camera_in_db,

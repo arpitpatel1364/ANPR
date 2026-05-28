@@ -5,7 +5,7 @@ import os
 
 # Add parent directory to path for config_db import
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config_db import load_config_from_db, save_settings_to_db
+from scripts.config_db import load_config_from_db, save_settings_to_db
 
 settings_bp = Blueprint('settings', __name__)
 
