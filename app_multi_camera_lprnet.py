@@ -121,7 +121,7 @@ print("✅ YOLO model loaded on CPU (GPU compatibility issue detected)")
 # ============================================================================
 # Initialize LPRNet
 print("🔄 Initializing LPRNet model...")
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
+device = 'cpu'  # Force CPU 
 lprnet_model = LPRNet(class_num=37, dropout_rate=0)
 lprnet_model.load_state_dict(torch.load('newmodel/best_lprnet.pth', map_location=device, weights_only=False))
 lprnet_model.to(device)
