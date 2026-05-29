@@ -84,7 +84,7 @@ class PlateLogger:
         """Background thread to refresh the allowed plates cache every 60s"""
         while True:
             try:
-                time.sleep(60)
+                time.sleep(300)
                 with DatabaseConnection() as db:
                     db.execute("SELECT license_plate FROM allowed_plates")
                     rows = db.fetchall()
@@ -259,7 +259,6 @@ class PlateLogger:
                      detection_confidence: float = 0.0,
                      processing_time_ms: float = 0.0,
                      camera_source: str = "unknown",
-                     frame_number: int = 0,
                      image_full_annotated: str | None = None,
                      bbox_x1: int | None = None,
                      bbox_y1: int | None = None,
@@ -273,7 +272,6 @@ class PlateLogger:
             detection_confidence (float): Confidence score from detection
             processing_time_ms (float): Time taken to process frame
             camera_source (str): Source of the video (webcam, RTSP, etc.)
-            frame_number (int): Frame number when detection occurred
         """
         try:
             # Check if we should log this detection
@@ -298,9 +296,9 @@ class PlateLogger:
                     query = """
                         INSERT INTO detections 
                         (timestamp, license_plate, verification_status, access_granted, 
-                         detection_confidence, processing_time_ms, camera_source, frame_number, 
+                         detection_confidence, processing_time_ms, camera_source, 
                          detection_count, log_reason, image_full_annotated, bbox_x1, bbox_y1, bbox_x2, bbox_y2)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """
                     params = (
                         timestamp,
@@ -310,7 +308,6 @@ class PlateLogger:
                         detection_confidence,
                         processing_time_ms,
                         camera_source,
-                        frame_number,
                         detection_count,
                         reason,
                         image_full_annotated or None,
@@ -333,7 +330,9 @@ class PlateLogger:
                 print(f"{status_icon} Plate {clean_plate}: {verification['verification_status']} - Access: {verification['access_granted']} - SKIPPED ({reason}) - Count: {detection_count}")
             
             # Periodic cleanup of old detections
-            if frame_number % 100 == 0:  # Cleanup every 100 frames
+            if not hasattr(self, '_log_calls'): self._log_calls = 0
+            self._log_calls += 1
+            if self._log_calls % 100 == 0:  # Cleanup periodically
                 self.cleanup_old_detections()
                 
             return should_log
@@ -430,7 +429,7 @@ class PlateLogger:
             with DatabaseConnection() as db:
                 query = """
                     SELECT timestamp, license_plate, verification_status, access_granted,
-                           detection_confidence, processing_time_ms, camera_source, frame_number,
+                           detection_confidence, processing_time_ms, camera_source,
                            detection_count, log_reason, image_full_annotated, bbox_x1, bbox_y1, bbox_x2, bbox_y2
                     FROM detections
                     WHERE license_plate = %s
@@ -451,7 +450,6 @@ class PlateLogger:
                         'Detection_Confidence': f"{row['detection_confidence']:.3f}",
                         'Processing_Time_MS': f"{row['processing_time_ms']:.2f}",
                         'Camera_Source': row['camera_source'],
-                        'Frame_Number': str(row['frame_number']),
                         'Detection_Count': str(row['detection_count']),
                         'Log_Reason': row['log_reason'] or '',
                         'Image_Full_Annotated': row['image_full_annotated'] or '',
@@ -482,7 +480,7 @@ class PlateLogger:
             # Build query with filters
             query = """
                 SELECT timestamp, license_plate, verification_status, access_granted,
-                       detection_confidence, processing_time_ms, camera_source, frame_number,
+                       detection_confidence, processing_time_ms, camera_source,
                        detection_count, log_reason, image_full_annotated, bbox_x1, bbox_y1, bbox_x2, bbox_y2
                 FROM detections
                 WHERE 1=1
@@ -507,7 +505,7 @@ class PlateLogger:
             # Write to CSV
             if rows:
                 fieldnames = ['Timestamp', 'License_Plate', 'Verification_Status', 'Access_Granted',
-                            'Detection_Confidence', 'Processing_Time_MS', 'Camera_Source', 'Frame_Number',
+                            'Detection_Confidence', 'Processing_Time_MS', 'Camera_Source',
                             'Detection_Count', 'Log_Reason', 'Image_Full_Annotated', 'Bbox_X1', 'Bbox_Y1', 'Bbox_X2', 'Bbox_Y2']
                 
                 with open(output_file, 'w', newline='', encoding='utf-8') as f:
@@ -523,7 +521,6 @@ class PlateLogger:
                             'Detection_Confidence': f"{row['detection_confidence']:.3f}",
                             'Processing_Time_MS': f"{row['processing_time_ms']:.2f}",
                             'Camera_Source': row['camera_source'],
-                            'Frame_Number': str(row['frame_number']),
                             'Detection_Count': str(row['detection_count']),
                             'Image_Full_Annotated': row['image_full_annotated'] or '',
                             'Bbox_X1': row['bbox_x1'],
@@ -545,9 +542,9 @@ if __name__ == "__main__":
     logger = PlateLogger()
     
     # Test logging some detections
-    logger.log_detection("AB12CD3456", 0.95, 150.5, "webcam", 100)
-    logger.log_detection("UNKNOWN123", 0.87, 120.3, "rtsp", 101)
-    logger.log_detection("XY98ZW7890", 0.92, 180.7, "webcam", 102)
+    logger.log_detection("AB12CD3456", 0.95, 150.5, "webcam")
+    logger.log_detection("UNKNOWN123", 0.87, 120.3, "rtsp")
+    logger.log_detection("XY98ZW7890", 0.92, 180.7, "webcam")
     
     # Get statistics
     stats = logger.get_statistics()

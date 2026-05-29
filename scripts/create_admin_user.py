@@ -4,6 +4,9 @@ Create Admin User in Database
 Creates default admin user with proper password hash
 """
 
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from werkzeug.security import generate_password_hash
 from db_connection import DatabaseConnection, test_connection
 

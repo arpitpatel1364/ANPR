@@ -147,7 +147,7 @@ def dashboard():
             # Recent detections (newest first, last 10)
             db.execute("""
                 SELECT timestamp, license_plate, verification_status, access_granted,
-                       detection_confidence, camera_source, frame_number,
+                       detection_confidence, camera_source,
                        image_full_annotated, bbox_x1, bbox_y1, bbox_x2, bbox_y2
                 FROM detections
                 ORDER BY timestamp DESC
@@ -165,7 +165,6 @@ def dashboard():
                     'Access_Granted': row['access_granted'],
                     'Detection_Confidence': f"{row['detection_confidence']:.3f}",
                     'Camera_Source': row['camera_source'],
-                    'Frame_Number': row['frame_number'],
                     'Image_Full_Annotated': row['image_full_annotated'] or '',
                     'bbox_x1': row['bbox_x1'],
                     'bbox_y1': row['bbox_y1'],

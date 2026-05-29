@@ -139,7 +139,7 @@ class ANPRSystemMonitor:
             with DatabaseConnection() as db:
                 query = """
                     SELECT timestamp, license_plate, camera_source, detection_confidence,
-                           verification_status, access_granted, frame_number,
+                           verification_status, access_granted,
                            image_full_annotated, bbox_x1, bbox_y1, bbox_x2, bbox_y2
                     FROM detections
                     ORDER BY timestamp DESC
@@ -157,7 +157,6 @@ class ANPRSystemMonitor:
                         'confidence': float(row['detection_confidence']),
                         'verification_status': row['verification_status'],
                         'access_granted': row['access_granted'],
-                        'frame_number': row['frame_number'],
                         # include image paths and bounding boxes
                         'image_full_annotated': row['image_full_annotated'] or '',
                         'thumbnail_url': row['image_full_annotated'].replace('.webp', '_thumb.webp') if row['image_full_annotated'] and row['image_full_annotated'].endswith('.webp') else row['image_full_annotated'] or '',

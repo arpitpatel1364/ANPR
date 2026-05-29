@@ -19,7 +19,7 @@ def load_detections():
         with DatabaseConnection() as db:
             query = """
                 SELECT id, timestamp, license_plate, verification_status, access_granted,
-                       detection_confidence, processing_time_ms, camera_source, frame_number,
+                       detection_confidence, processing_time_ms, camera_source,
                        detection_count, log_reason, image_full_annotated, bbox_x1, bbox_y1, bbox_x2, bbox_y2
                 FROM detections
                 ORDER BY timestamp DESC
@@ -39,7 +39,6 @@ def load_detections():
                     'Detection_Confidence': f"{row['detection_confidence']:.3f}",
                     'Processing_Time_MS': f"{row['processing_time_ms']:.2f}",
                     'Camera_Source': row['camera_source'],
-                    'Frame_Number': row['frame_number'],
                     'Detection_Count': row['detection_count'],
                     'Log_Reason': row['log_reason'] or '',
                     'Image_Full_Annotated': row['image_full_annotated'] or '',
@@ -108,7 +107,7 @@ def detections():
             offset = (page - 1) * per_page
             query = f"""
                 SELECT id, timestamp, license_plate, verification_status, access_granted,
-                       detection_confidence, processing_time_ms, camera_source, frame_number,
+                       detection_confidence, processing_time_ms, camera_source,
                        detection_count, log_reason, image_full_annotated, bbox_x1, bbox_y1, bbox_x2, bbox_y2
                 FROM detections
                 WHERE {where_sql}
@@ -131,7 +130,6 @@ def detections():
                     'Detection_Confidence': f"{row['detection_confidence']:.3f}",
                     'Processing_Time_MS': f"{row['processing_time_ms']:.2f}",
                     'Camera_Source': row['camera_source'],
-                    'Frame_Number': row['frame_number'],
                     'Detection_Count': row['detection_count'],
                     'Log_Reason': row['log_reason'] or '',
                     'Image_Full_Annotated': row['image_full_annotated'] or '',
@@ -228,7 +226,7 @@ def export_detections():
             
             query = f"""
                 SELECT timestamp, license_plate, verification_status, access_granted,
-                       detection_confidence, processing_time_ms, camera_source, frame_number,
+                       detection_confidence, processing_time_ms, camera_source,
                        detection_count, log_reason, image_full_annotated, bbox_x1, bbox_y1, bbox_x2, bbox_y2
                 FROM detections
                 WHERE {where_sql}
@@ -248,7 +246,7 @@ def export_detections():
         
         with open(temp_path, 'w', newline='', encoding='utf-8') as f:
             fieldnames = ['Timestamp', 'License_Plate', 'Verification_Status', 'Access_Granted',
-                         'Detection_Confidence', 'Processing_Time_MS', 'Camera_Source', 'Frame_Number',
+                         'Detection_Confidence', 'Processing_Time_MS', 'Camera_Source',
                          'Detection_Count', 'Log_Reason', 'Image_Full_Annotated', 'bbox_x1', 'bbox_y1', 'bbox_x2', 'bbox_y2']
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
@@ -262,7 +260,6 @@ def export_detections():
                     'Detection_Confidence': f"{row['detection_confidence']:.3f}",
                     'Processing_Time_MS': f"{row['processing_time_ms']:.2f}",
                     'Camera_Source': row['camera_source'],
-                    'Frame_Number': str(row['frame_number']),
                     'Detection_Count': str(row['detection_count']),
                     'Log_Reason': row['log_reason'] or '',
                     'Image_Full_Annotated': row['image_full_annotated'] or '',
@@ -323,7 +320,7 @@ def export_detections_pdf():
             
             query = f"""
                 SELECT timestamp, license_plate, verification_status, access_granted,
-                       detection_confidence, processing_time_ms, camera_source, frame_number,
+                       detection_confidence, processing_time_ms, camera_source,
                        detection_count, log_reason, image_full_annotated, bbox_x1, bbox_y1, bbox_x2, bbox_y2
                 FROM detections
                 WHERE {where_sql}
@@ -343,7 +340,6 @@ def export_detections_pdf():
                 'Detection_Confidence': f"{row['detection_confidence']:.3f}",
                 'Processing_Time_MS': f"{row['processing_time_ms']:.2f}",
                 'Camera_Source': row['camera_source'],
-                'Frame_Number': str(row['frame_number']),
                 'Detection_Count': str(row['detection_count']),
                 'Log_Reason': row['log_reason'] or '',
                 'Image_Full_Annotated': row['image_full_annotated'] or '',

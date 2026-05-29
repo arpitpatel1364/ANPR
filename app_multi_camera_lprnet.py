@@ -1,3 +1,13 @@
+# PERFORMANCE OPTIMIZATIONS APPLIED
+# - PyTorch threads limited to 2 (torch.set_num_threads)
+# - OpenCV threads limited to 2 (cv2.setNumThreads)
+# - Frame fetch loop sleep: 0.001s -> 0.05s
+# - Global processor sleep: 0.01s -> 0.05s
+# - cap.grab() used for skipped frames
+# - Model loading deferred to load_models()
+# - Directory creation moved out of fetch loop
+# - Snapshot writes offloaded to thread pool
+
 # Set headless environment variables BEFORE importing OpenCV/PaddleOCR
 # This prevents Qt GUI initialization errors in headless mode
 import os
@@ -108,25 +118,33 @@ import signal
 import torch
 from websocket_client import initialize_websocket_client, get_websocket_client
 
-# Load YOLO model with GPU support
-model_path = os.path.join(os.path.dirname(__file__), "yolov8_best_ANPR_Vamsi.pt")
-model = YOLO(model_path)
-# Force CPU to avoid CUDA kernel compatibility issues
-model.to('cpu')
-print("✅ YOLO model loaded on CPU (GPU compatibility issue detected)")
+torch.set_num_threads(2)        # Prevent PyTorch from using all cores
+torch.set_num_interop_threads(1)
+cv2.setNumThreads(2)            # Prevent OpenCV from using all cores
+model = None
+lprnet_model = None
+device = 'cpu'
 
-# ============================================================================
-#  PaddleOCR initialization block
-#  LPRNet initialization block
-# ============================================================================
-# Initialize LPRNet
-print("🔄 Initializing LPRNet model...")
-device = 'cpu'  # Force CPU 
-lprnet_model = LPRNet(class_num=37, dropout_rate=0)
-lprnet_model.load_state_dict(torch.load('newmodel/best_lprnet.pth', map_location=device, weights_only=False))
-lprnet_model.to(device)
-lprnet_model.eval()
-print(f"✅ LPRNet initialized on {device}")
+def load_models():
+    global model, lprnet_model
+    # Load YOLO model with GPU support
+    model_path = os.path.join(os.path.dirname(__file__), "yolov8_best_ANPR_Vamsi.pt")
+    model = YOLO(model_path)
+    # Force CPU to avoid CUDA kernel compatibility issues
+    model.to('cpu')
+    print("✅ YOLO model loaded on CPU (GPU compatibility issue detected)")
+
+    # ============================================================================
+    #  PaddleOCR initialization block
+    #  LPRNet initialization block
+    # ============================================================================
+    # Initialize LPRNet
+    print("🔄 Initializing LPRNet model...")
+    lprnet_model = LPRNet(class_num=37, dropout_rate=0)
+    lprnet_model.load_state_dict(torch.load('newmodel/best_lprnet.pth', map_location=device, weights_only=False))
+    lprnet_model.to(device)
+    lprnet_model.eval()
+    print(f"✅ LPRNet initialized on {device}")
 
 # Define confusion mapping for common OCR errors
 # digits that look like letters (and vice versa)
@@ -281,6 +299,8 @@ class CameraProcessor:
         self.last_roi_snapshot_time = 0
         self.roi_snapshot_interval = self.headless_settings.get('roi_snapshot_interval', 2)
         self.roi_snapshot_dir = os.path.join(os.path.dirname(__file__), 'admin_panel', 'static', 'images', 'roi_snapshots')
+        os.makedirs(self.roi_snapshot_dir, exist_ok=True)
+        self.api_thread_pool = api_thread_pool
         self.save_frames = self.headless_settings.get('save_frames', False)
 
         # ============================================================================
@@ -634,7 +654,7 @@ class CameraProcessor:
             frame = np.ascontiguousarray(frame)
         return True
 
-    def process_frame(self, frame, frame_number=0):
+    def process_frame(self, frame, frame_number=None):
         """
         INDEPENDENT PROCESSING LOGIC (moved from fetch thread)
         Used by global processor thread to process frames from queue
@@ -644,9 +664,9 @@ class CameraProcessor:
 
             if not self._validate_frame(frame, "input_frame"):
                 if self.headless_mode:
-                    logging.warning(f"[{self.name}] Invalid frame received, skipping (frame {frame_number})")
+                    logging.warning(f"[{self.name}] Invalid frame received, skipping")
                 else:
-                    print(f"⚠️ [{self.name}] Invalid frame received, skipping (frame {frame_number})")
+                    print(f"⚠️ [{self.name}] Invalid frame received, skipping")
                 return frame, []
 
             original_frame = frame.copy()
@@ -695,9 +715,9 @@ class CameraProcessor:
 
             if not self._validate_frame(frame_for_detection, "detection_frame"):
                 if self.headless_mode:
-                    logging.warning(f"[{self.name}] Invalid ROI frame, skipping detection (frame {frame_number})")
+                    logging.warning(f"[{self.name}] Invalid ROI frame, skipping detection")
                 else:
-                    print(f"⚠️ [{self.name}] Invalid ROI frame, skipping detection (frame {frame_number})")
+                    print(f"⚠️ [{self.name}] Invalid ROI frame, skipping detection")
                 return original_frame, []
 
             # YOLO detection (synchronized globally via processor thread)
@@ -731,7 +751,7 @@ class CameraProcessor:
 
                     if not self._validate_frame(cropped_plate, "cropped_plate"):
                         if self.headless_mode:
-                            logging.warning(f"[{self.name}] Invalid cropped plate, skipping OCR (frame {frame_number})")
+                            logging.warning(f"[{self.name}] Invalid cropped plate, skipping OCR")
                         continue
 
                     if not cropped_plate.flags['C_CONTIGUOUS']:
@@ -819,7 +839,6 @@ class CameraProcessor:
                             image_urls = self.save_detection_images(
                                 full_frame_annotated=annotated_frame,
                                 plate_text=license_plate_text,
-                                frame_number=frame_number,
                                 verification_status=verification_status,
                                 bbox_x1=global_x1,
                                 bbox_y1=global_y1,
@@ -840,7 +859,6 @@ class CameraProcessor:
                                     detection_confidence=confidence,
                                     processing_time_ms=processing_time,
                                     camera_source=f"{self.name} ({self.location})",
-                                    frame_number=frame_number,
                                     image_full_annotated=image_urls.get('image_full_annotated') if image_urls else None,
                                     bbox_x1=image_urls.get('bbox_x1') if image_urls else None,
                                     bbox_y1=image_urls.get('bbox_y1') if image_urls else None,
@@ -853,14 +871,13 @@ class CameraProcessor:
                                     self.update_verified_plate_cooldown(license_plate_text)
 
                             if verification_status == "VERIFIED":
-                                self.save_verified_plate_image(processed_frame, license_plate_text, frame_number)
+                                self.save_verified_plate_image(processed_frame, license_plate_text)
 
                             self.send_detection_to_admin_panel(
                                 plate=license_plate_text,
                                 confidence=confidence,
                                 processing_time=processing_time,
                                 verification_status=verification_status,
-                                frame_number=frame_number,
                                 image_urls=image_urls
                             )
 
@@ -896,13 +913,19 @@ class CameraProcessor:
 
             try:
                 if self.cap and self.cap.isOpened():
+                    self.frame_count += 1
+                    if PROCESS_EVERY_NTH_FRAME > 1 and self.frame_count % PROCESS_EVERY_NTH_FRAME != 0:
+                        self.cap.grab()
+                        time.sleep(0.05)
+                        continue
+
                     ret, frame = self.cap.read()
                     
                     # Add retry logic for failed reads
                     if not ret or frame is None:
                         retry_count = 0
                         while retry_count < 5:
-                            time.sleep(0.2)
+                            time.sleep(2.0)
                             ret, frame = self.cap.read()
                             if ret and frame is not None:
                                 break
@@ -917,7 +940,6 @@ class CameraProcessor:
                     
                     if ret and frame is not None:
                         if self._validate_frame(frame, "captured_frame"):
-                            self.frame_count += 1
                             frame_copy = frame.copy()
                             
                             # Optimization 1: Throttle frame ingestion (2 FPS = 0.5s per frame)
@@ -950,9 +972,8 @@ class CameraProcessor:
                             try:
                                 current_time = time.time()
                                 if current_time - self.last_roi_snapshot_time >= self.roi_snapshot_interval:
-                                    os.makedirs(self.roi_snapshot_dir, exist_ok=True)
                                     snapshot_path = os.path.join(self.roi_snapshot_dir, f"{self.camera_id}.jpg")
-                                    cv2.imwrite(snapshot_path, frame_copy)
+                                    self.api_thread_pool.submit(cv2.imwrite, snapshot_path, frame_copy)
                                     self.last_roi_snapshot_time = current_time
                             except Exception as e:
                                 if self.headless_mode:
@@ -969,7 +990,7 @@ class CameraProcessor:
                             print(f"⚠️ [{self.name}] Stream lost after retries, exiting thread...")
                         return
                 
-                time.sleep(0.001)  # Small sleep to prevent busy-waiting
+                time.sleep(0.05)  # Small sleep to prevent busy-waiting
 
             except Exception as e:
                 if self.headless_mode:
@@ -1299,14 +1320,14 @@ class CameraProcessor:
         except Exception as e:
             logging.error(f"[{self.name}] Error saving frame: {e}")
 
-    def save_verified_plate_image(self, frame, plate_text, frame_number):
+    def save_verified_plate_image(self, frame, plate_text):
         """Save image for verified plates"""
         try:
             verified_dir = "admin_panel/static/images/verified_plates"
             os.makedirs(verified_dir, exist_ok=True)
 
             timestamp = time.strftime("%Y%m%d_%H%M%S")
-            filename = f"verified_{self.camera_id}_{timestamp}_{plate_text}_frame{frame_number}.jpg"
+            filename = f"verified_{self.camera_id}_{timestamp}_{plate_text}.jpg"
             filepath = os.path.join(verified_dir, filename)
 
             cv2.imwrite(filepath, frame)
@@ -1322,7 +1343,7 @@ class CameraProcessor:
             else:
                 print(f"❌ [{self.name}] Error saving verified plate image: {e}")
 
-    def save_detection_images(self, full_frame_annotated, plate_text, frame_number, verification_status, bbox_x1, bbox_y1, bbox_x2, bbox_y2):
+    def save_detection_images(self, full_frame_annotated, plate_text, verification_status, bbox_x1, bbox_y1, bbox_x2, bbox_y2):
         """Save detection image and return URLs and bbox"""
         urls = {}
         try:
@@ -1335,7 +1356,7 @@ class CameraProcessor:
             safe_plate = re.sub(r"[^A-Za-z0-9]", "_", plate_text) if plate_text else "unknown"
             status_tag = "VER" if verification_status == "VERIFIED" else "NOTVER"
 
-            full_annotated_name = f"{self.camera_id}_{timestamp}_{safe_plate}_{status_tag}_f{frame_number}_ann.webp"
+            full_annotated_name = f"{self.camera_id}_{timestamp}_{safe_plate}_{status_tag}_ann.webp"
 
             full_annotated_path = os.path.join(full_annotated_dir, full_annotated_name)
 
@@ -1360,7 +1381,7 @@ class CameraProcessor:
                 print(f"❌ [{self.name}] Error saving detection images: {e}")
         return urls
 
-    def send_detection_to_admin_panel(self, plate, confidence, processing_time, verification_status, frame_number, image_urls=None):
+    def send_detection_to_admin_panel(self, plate, confidence, processing_time, verification_status, image_urls=None):
         """Send real-time detection to admin panel via WebSocket"""
         try:
             global websocket_client
@@ -1373,7 +1394,6 @@ class CameraProcessor:
                     'confidence': confidence,
                     'processing_time': processing_time,
                     'verification_status': verification_status,
-                    'frame_number': frame_number,
                     'camera_id': self.camera_id,
                     'camera_name': self.name,
                     'camera_location': self.location,
@@ -1441,7 +1461,7 @@ def process_frame_task(frame_data):
             return
 
         # Process the frame
-        processed_frame, detected_texts = camera_processor.process_frame(frame, frame_number)
+        processed_frame, detected_texts = camera_processor.process_frame(frame)
         
         # Store processed frame back in camera processor for display
         camera_processor.current_processed_frame = processed_frame
@@ -1500,7 +1520,7 @@ def global_frame_processor():
                 
         # If no frames were processed across all cameras, sleep briefly
         if not processed_any:
-            time.sleep(0.01)
+            time.sleep(0.05)
 
 
 # ============================================================================
@@ -1556,7 +1576,7 @@ def display_thread_worker(cameras_list, window_title, grid_layout, headless_sett
                     cv2.imwrite(filename, grid_frame)
                     print(f"📸 Frame saved as {filename}")
 
-            time.sleep(0.01)
+            time.sleep(0.033)   # ~30 fps cap
 
         except Exception as e:
             print(f"❌ Error in display thread: {e}")
@@ -1763,6 +1783,9 @@ def signal_handler(signum, frame):
 
 def main():
     global stop_processing, plate_logger, processor_thread, display_thread, cameras_dict, PROCESS_EVERY_NTH_FRAME
+
+    # Load models
+    load_models()
 
     # Load configuration
     config = load_config()
