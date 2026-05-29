@@ -9,6 +9,7 @@ import sys
 import csv
 import json
 from datetime import datetime
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from db_connection import DatabaseConnection, initialize_database, test_connection
 
 def migrate_csv_to_mysql(csv_file='plate_detections.csv'):
@@ -50,9 +51,9 @@ def migrate_csv_to_mysql(csv_file='plate_detections.csv'):
                     query = """
                         INSERT INTO detections 
                         (timestamp, license_plate, verification_status, access_granted,
-                         detection_confidence, processing_time_ms, camera_source, frame_number,
+                         detection_confidence, processing_time_ms, camera_source,
                          detection_count, log_reason, image_full_raw, image_full_annotated, image_plate_crop)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """
                     
                     # Helper function to clean image path values
@@ -78,7 +79,6 @@ def migrate_csv_to_mysql(csv_file='plate_detections.csv'):
                         float(row.get('Detection_Confidence', 0)) if row.get('Detection_Confidence') else 0.0,
                         float(row.get('Processing_Time_MS', 0)) if row.get('Processing_Time_MS') else 0.0,
                         row.get('Camera_Source', 'unknown'),
-                        int(row.get('Frame_Number', 0)) if row.get('Frame_Number') else 0,
                         int(row.get('Detection_Count', 1)) if row.get('Detection_Count') else 1,
                         clean_image_path(row.get('Log_Reason', '')) or None,
                         image_full_raw,

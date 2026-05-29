@@ -1,6 +1,8 @@
 import json
 import os
+import sys
 import time
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from db_connection import DatabaseConnection
 
 def load_config_from_db():

@@ -1,9 +1,14 @@
 # Core ML and Computer Vision
-torch>=1.9.0
 ultralytics>=8.0.0
 opencv-python>=4.5.0
 numpy>=1.21.0
 
+# torch
+# --index-url https://download.pytorch.org/whl/cpu
+
+torch==2.12.0
+torchvision
+torchaudio
 
 # Web and API
 requests>=2.25.0

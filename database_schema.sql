@@ -16,7 +16,6 @@ CREATE TABLE IF NOT EXISTS detections (
     detection_confidence DECIMAL(5,3) NOT NULL DEFAULT 0.000,
     processing_time_ms DECIMAL(10,2) NOT NULL DEFAULT 0.00,
     camera_source VARCHAR(255) NOT NULL,
-    frame_number INT NOT NULL DEFAULT 0,
     detection_count INT NOT NULL DEFAULT 1,
     log_reason VARCHAR(255) DEFAULT NULL,
     image_full_annotated VARCHAR(500) DEFAULT NULL,
