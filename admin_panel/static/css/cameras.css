@@ -1,0 +1,51 @@
+/* Camera card and ROI modal header gradient match */
+.camera-card .card-header,
+.roi-modal-header {
+    background: linear-gradient(135deg, #72a954 0%, #5a8a42 100%) !important;
+    color: #ffffff !important;
+    border-bottom: none;
+}
+
+.camera-card .card-header .card-title,
+.camera-card .card-header .card-title i {
+    color: #ffffff !important;
+    font-weight: 600;
+}
+
+.camera-card .card-header .btn {
+    background: rgba(255, 255, 255, 0.2) !important;
+    border: none !important;
+    color: #ffffff !important;
+    border-radius: 50px;
+}
+
+.camera-card .card-header .btn:hover {
+    background: rgba(255, 255, 255, 0.3) !important;
+}
+
+/* Dropdown menu as full card with border included */
+.dropdown-menu.dropdown-menu-end {
+    background-color: #ffffff;
+    border: 1px solid #c5c5c5;
+    box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.12);
+    border-radius: 0.65rem;
+}
+
+/* Set ROI selected button in green */
+.btn-outline-success.active,
+.btn-outline-success:active,
+.btn-outline-success:focus,
+.btn-outline-success:hover {
+    background-color: #198754;
+    color: #ffffff;
+    border-color: #198754;
+}
+
+/* Ensure ROI preview canvas fixed max size */
+#roiCanvas {
+    max-width: 100%;
+    max-height: 620px;
+    width: 100%;
+    height: auto;
+    border-radius: 0.4rem;
+}

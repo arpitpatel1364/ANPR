@@ -5,61 +5,11 @@
 {% block page_title %}Camera Management{% endblock %}
 {% block page_subtitle %}Configure and manage your ANPR camera system{% endblock %}
 
+{% block extra_css %}
+<link href="{{ url_for('static', filename='css/cameras.css') }}" rel="stylesheet">
+{% endblock %}
+
 {% block content %}
-<style>
-/* Camera card and ROI modal header gradient match */
-.camera-card .card-header,
-.roi-modal-header {
-    background: linear-gradient(135deg, #19b952 0%, #0ea161 100%) !important;
-    color: #ffffff !important;
-    border-bottom: none;
-}
-
-.camera-card .card-header .card-title,
-.camera-card .card-header .card-title i {
-    color: #ffffff !important;
-    font-weight: 600;
-}
-
-.camera-card .card-header .btn {
-    background: rgba(255, 255, 255, 0.2) !important;
-    border: none !important;
-    color: #ffffff !important;
-    border-radius: 50px;
-}
-
-.camera-card .card-header .btn:hover {
-    background: rgba(255, 255, 255, 0.3) !important;
-}
-
-/* Dropdown menu as full card with border included */
-.dropdown-menu.dropdown-menu-end {
-    background-color: #ffffff;
-    border: 1px solid #c5c5c5;
-    box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.12);
-    border-radius: 0.65rem;
-}
-
-/* Set ROI selected button in green */
-.btn-outline-success.active,
-.btn-outline-success:active,
-.btn-outline-success:focus,
-.btn-outline-success:hover {
-    background-color: #198754;
-    color: #ffffff;
-    border-color: #198754;
-}
-
-/* Ensure ROI preview canvas fixed max size */
-#roiCanvas {
-    max-width: 100%;
-    max-height: 620px;
-    width: 100%;
-    height: auto;
-    border-radius: 0.4rem;
-}
-</style>
-
 <!-- Action Bar -->
 <div class="row mb-4">
     <div class="col-12">
@@ -297,7 +247,7 @@
                 </div>
                 {% endif %}
             </div>
-            <div class="card-footer bg-transparent border-top-0 pt-0">
+            <div class="card-footer bg-transparent border-top-0 pt-0 mt-n3 pb-3">
                 <div class="d-flex justify-content-between align-items-center">
                     <button class="btn btn-sm btn-{{ 'danger' if camera.enabled else 'success' }} fw-bold" 
                             onclick="toggleCameraLive('{{ camera.id }}', {{ 'true' if not camera.enabled else 'false' }})">
@@ -741,8 +691,8 @@ function toggleCameraLive(cameraId, enable) {
                         if (statusData.success) {
                             updateCameraCard(statusData.data);
                             // Update button
-                            button.innerHTML = `<i class="bi bi-${data.enabled ? 'pause' : 'play'} me-1"></i>${data.enabled ? 'Disable' : 'Enable'}`;
-                            button.className = `btn btn-sm btn-${data.enabled ? 'warning' : 'success'} btn-modern btn-modern-enhanced`;
+                            button.innerHTML = `<i class="bi bi-${data.enabled ? 'stop-circle' : 'play-circle'} me-1"></i>${data.enabled ? 'DISABLE' : 'ENABLE'}`;
+                            button.className = `btn btn-sm btn-${data.enabled ? 'danger' : 'success'} fw-bold`;
                         }
                     });
             }, 500);
