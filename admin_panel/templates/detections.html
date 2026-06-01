@@ -252,17 +252,16 @@
                                 </td>
                                 <td>
                                     {% set ann = detection['Image_Full_Annotated'] %}
-                                    {% set thumb = ann|replace('.webp', '_thumb.webp') if ann and ann.endswith('.webp') else ann %}
                                     {% set x1 = detection['bbox_x1'] %}
                                     {% set y1 = detection['bbox_y1'] %}
                                     {% set x2 = detection['bbox_x2'] %}
                                     {% set y2 = detection['bbox_y2'] %}
                                     {% if ann and x1 is not none and y1 is not none %}
                                     <div class="dynamic-crop-container shadow-sm" data-src="{{ ann }}?t={{ detection['timestamp'].timestamp()|int if detection['timestamp'] else 0 }}" data-x1="{{ x1 }}" data-y1="{{ y1 }}" data-x2="{{ x2 }}" data-y2="{{ y2 }}" style="width:60px;height:35px;border-radius:4px;overflow:hidden;position:relative;background:#f0f0f0;cursor:pointer;" onclick="previewImage('{{ ann }}?t={{ detection['timestamp'].timestamp()|int if detection['timestamp'] else 0 }}')" title="Click to view full image">
-                                        <img src="{{ thumb }}?t={{ detection['timestamp'].timestamp()|int if detection['timestamp'] else 0 }}" style="position:absolute;visibility:hidden;">
+                                        <img src="{{ ann }}?t={{ detection['timestamp'].timestamp()|int if detection['timestamp'] else 0 }}" style="position:absolute;visibility:hidden;">
                                     </div>
                                     {% elif ann %}
-                                    <img src="{{ thumb }}?t={{ detection['timestamp'].timestamp()|int if detection['timestamp'] else 0 }}" alt="Annotated" loading="lazy" style="width:60px;height:35px;object-fit:cover;border-radius:4px;cursor:pointer;" onclick="previewImage('{{ ann }}?t={{ detection['timestamp'].timestamp()|int if detection['timestamp'] else 0 }}')">
+                                    <img src="{{ ann }}?t={{ detection['timestamp'].timestamp()|int if detection['timestamp'] else 0 }}" alt="Annotated" loading="lazy" style="width:60px;height:35px;object-fit:cover;border-radius:4px;cursor:pointer;" onclick="previewImage('{{ ann }}?t={{ detection['timestamp'].timestamp()|int if detection['timestamp'] else 0 }}')">
                                     {% else %}
                                     <i class="bi bi-image text-muted"></i>
                                     {% endif %}

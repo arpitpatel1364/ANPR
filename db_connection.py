@@ -23,7 +23,7 @@ DEFAULT_DB_CONFIG = {
     'autocommit': True,
     'connect_timeout': 10,
     'pool_name': 'anpr_pool',
-    'pool_size': 5,
+    'pool_size': 10,
     'pool_reset_session': True
 }
 
@@ -71,7 +71,7 @@ def get_connection_pool() -> Optional[pooling.MySQLConnectionPool]:
                         'charset': db_config.get('charset', 'utf8mb4'),
                         'autocommit': db_config.get('autocommit', True),
                         'pool_name': db_config.get('pool_name', 'anpr_pool'),
-                        'pool_size': db_config.get('pool_size', 5),
+                        'pool_size': db_config.get('pool_size', 10),
                         'pool_reset_session': db_config.get('pool_reset_session', True)
                     }
                     

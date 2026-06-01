@@ -261,6 +261,58 @@ def api_stats():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/cameras/<int:camera_id>/snapshot')
+@login_required
+def get_camera_snapshot(camera_id):
+    """
+    On-demand snapshot for ROI editor.
+    Grabs latest frame from live buffer — no disk write.
+    """
+    import cv2
+    import threading
+    from flask import Response
+    from scripts.config_db import load_config_from_db
+    
+    config = load_config_from_db()
+    cameras = config.get('cameras', []) if config else []
+    camera_cfg = next((cam for cam in cameras if cam.get('id') == camera_id), None)
+    if not camera_cfg:
+        return jsonify({'error': 'Camera not found'}), 404
+        
+    rtsp_source = camera_cfg.get('rtsp_source')
+    if not rtsp_source:
+        return jsonify({'error': 'No RTSP source configured for this camera'}), 400
+        
+    frame_container = {'frame': None}
+    def capture():
+        try:
+            if isinstance(rtsp_source, int) or (isinstance(rtsp_source, str) and rtsp_source.isdigit()):
+                cap = cv2.VideoCapture(int(rtsp_source))
+            else:
+                cap = cv2.VideoCapture(rtsp_source, cv2.CAP_FFMPEG)
+            if cap.isOpened():
+                try:
+                    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                except:
+                    pass
+                ret, frame = cap.read()
+                if ret and frame is not None:
+                    frame_container['frame'] = frame
+            cap.release()
+        except Exception:
+            pass
+            
+    t = threading.Thread(target=capture, daemon=True)
+    t.start()
+    t.join(timeout=5)
+    
+    frame = frame_container['frame']
+    if frame is None:
+        return jsonify({'error': 'No frame available'}), 404
+        
+    _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
+    return Response(buffer.tobytes(), mimetype='image/jpeg')
+
 if __name__ == '__main__':
     print("=" * 60)
     print("🚀 Starting ANPR Admin Panel Server...")

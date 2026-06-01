@@ -51,7 +51,7 @@ class ANPRSystemMonitor:
         while True:
             try:
                 # Update system stats
-                cpu_p = psutil.cpu_percent(interval=1)
+                cpu_p = psutil.cpu_percent(interval=None)
                 mem_p = psutil.virtual_memory().percent
                 last_up = datetime.now().isoformat()
                 
