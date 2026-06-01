@@ -24,6 +24,7 @@
     height: 100%;
     object-fit: contain;
     transition: transform 0.1s ease-out;
+    will-change: transform;
 }
 </style>
 <!-- Action Bar -->
@@ -214,7 +215,6 @@
                     <i class="bi bi-table me-2"></i>Detection Records
                 </h5>
                 <div class="d-flex align-items-center gap-2">
-                    <span class="text-muted small">Page {{ current_page }} of {{ total_pages }}</span>
                     <select class="form-select form-select-sm form-control-modern" style="width: auto;" onchange="changePerPage(this.value)">
                         <option value="10" {{ 'selected' if per_page == 10 }}>10 per page</option>
                         <option value="20" {{ 'selected' if per_page == 20 }}>20 per page</option>
@@ -244,7 +244,7 @@
                         <tbody>
                             {% for detection in detections %}
                             <tr>
-                                <td>{{ loop.index + (current_page - 1) * per_page }}</td>
+                                <td>{{ loop.index }}</td>
                                 <td>
                                     <small class="text-muted">
                                         {{ detection.Timestamp.split('.')[0] if detection.Timestamp else '-' }}
@@ -257,11 +257,11 @@
                                     {% set x2 = detection['bbox_x2'] %}
                                     {% set y2 = detection['bbox_y2'] %}
                                     {% if ann and x1 is not none and y1 is not none %}
-                                    <div class="dynamic-crop-container shadow-sm" data-src="{{ ann }}?t={{ detection['timestamp'].timestamp()|int if detection['timestamp'] else 0 }}" data-x1="{{ x1 }}" data-y1="{{ y1 }}" data-x2="{{ x2 }}" data-y2="{{ y2 }}" style="width:60px;height:35px;border-radius:4px;overflow:hidden;position:relative;background:#f0f0f0;cursor:pointer;" onclick="previewImage('{{ ann }}?t={{ detection['timestamp'].timestamp()|int if detection['timestamp'] else 0 }}')" title="Click to view full image">
-                                        <img src="{{ ann }}?t={{ detection['timestamp'].timestamp()|int if detection['timestamp'] else 0 }}" style="position:absolute;visibility:hidden;">
+                                    <div class="dynamic-crop-container" data-src="{{ ann }}?t={{ detection['timestamp'].timestamp()|int if detection['timestamp'] else 0 }}" data-x1="{{ x1 }}" data-y1="{{ y1 }}" data-x2="{{ x2 }}" data-y2="{{ y2 }}" style="width:60px;height:35px;border-radius:4px;overflow:hidden;position:relative;background:#f0f0f0;cursor:pointer;transform:translateZ(0);will-change:transform;" onclick="previewImage('{{ ann }}?t={{ detection['timestamp'].timestamp()|int if detection['timestamp'] else 0 }}')" title="Click to view full image">
+                                        <img src="{{ ann }}?t={{ detection['timestamp'].timestamp()|int if detection['timestamp'] else 0 }}" loading="lazy" style="position:absolute;visibility:hidden;">
                                     </div>
                                     {% elif ann %}
-                                    <img src="{{ ann }}?t={{ detection['timestamp'].timestamp()|int if detection['timestamp'] else 0 }}" alt="Annotated" loading="lazy" style="width:60px;height:35px;object-fit:cover;border-radius:4px;cursor:pointer;" onclick="previewImage('{{ ann }}?t={{ detection['timestamp'].timestamp()|int if detection['timestamp'] else 0 }}')">
+                                    <img src="{{ ann }}?t={{ detection['timestamp'].timestamp()|int if detection['timestamp'] else 0 }}" alt="Annotated" loading="lazy" width="60" height="35" style="width:60px;height:35px;object-fit:cover;border-radius:4px;cursor:pointer;transform:translateZ(0);will-change:transform;" onclick="previewImage('{{ ann }}?t={{ detection['timestamp'].timestamp()|int if detection['timestamp'] else 0 }}')">
                                     {% else %}
                                     <i class="bi bi-image text-muted"></i>
                                     {% endif %}
@@ -270,17 +270,17 @@
                                     <span class="fw-bold text-primary">{{ detection.License_Plate or '-' }}</span>
                                 </td>
                                 <td>
-                                    <span class="badge badge-modern bg-{{ 'success' if detection.Verification_Status == 'VERIFIED' else 'warning' }}-gradient">
+                                    <span class="badge badge-modern bg-{{ 'success' if detection.Verification_Status == 'VERIFIED' else 'warning' }}">
                                         {{ detection.Verification_Status or '-' }}
                                     </span>
                                 </td>
                                 <td>
-                                    <span class="badge badge-modern bg-{{ 'success' if detection.Access_Granted == 'YES' else 'danger' }}-gradient">
+                                    <span class="badge badge-modern bg-{{ 'success' if detection.Access_Granted == 'YES' else 'danger' }}">
                                         {{ detection.Access_Granted or 'NO' }}
                                     </span>
                                 </td>
                                 <td>
-                                    <span class="badge badge-modern bg-info-gradient">
+                                    <span class="badge badge-modern bg-info">
                                         {{ "%.1f"|format(detection.Detection_Confidence|float) if detection.Detection_Confidence else '-' }}%
                                     </span>
                                 </td>
@@ -289,10 +289,10 @@
                                 </td>
                                 <td>
                                     <div class="btn-group btn-group-sm">
-                                        <button class="btn btn-outline-primary btn-modern btn-modern-enhanced" data-detection='{{ detection|tojson }}' onclick="viewDetailsFromButton(this)" title="View Details">
+                                        <button class="btn btn-outline-primary btn-modern btn-modern-enhanced view-details-btn" data-detection='{{ detection|tojson }}' title="View Details">
                                             <i class="bi bi-eye"></i>
                                         </button>
-                                        <button class="btn btn-outline-danger btn-modern btn-modern-enhanced" onclick="deleteDetection('{{ detection.id }}')" title="Delete Detection">
+                                        <button class="btn btn-outline-danger btn-modern btn-modern-enhanced delete-btn" data-id="{{ detection.id }}" title="Delete Detection">
                                             <i class="bi bi-trash"></i>
                                         </button>
                                     </div>
@@ -304,55 +304,13 @@
                 </div>
                 
                 <!-- Pagination -->
-                {% if total_pages > 1 %}
-                <nav aria-label="Detection pagination">
-                    <ul class="pagination justify-content-center">
-                        <li class="page-item {{ 'disabled' if current_page == 1 }}">
-                            {% if current_page > 1 %}
-                            <a class="page-link" href="#" onclick="goToPage({{ current_page - 1 }}); return false;">
-                                <i class="bi bi-chevron-left"></i>
-                            </a>
-                            {% else %}
-                            <span class="page-link">
-                                <i class="bi bi-chevron-left"></i>
-                            </span>
-                            {% endif %}
-                        </li>
-                        
-                        {% for page_num in range(1, total_pages + 1) %}
-                            {% if page_num == current_page %}
-                            <li class="page-item active">
-                                <span class="page-link">{{ page_num }}</span>
-                            </li>
-                            {% elif page_num <= 3 or page_num > total_pages - 3 or (page_num >= current_page - 1 and page_num <= current_page + 1) %}
-                            <li class="page-item">
-                                <a class="page-link" href="#" onclick="goToPage({{ page_num }}); return false;">{{ page_num }}</a>
-                            </li>
-                            {% elif page_num == 4 and current_page > 5 %}
-                            <li class="page-item disabled">
-                                <span class="page-link">...</span>
-                            </li>
-                            {% elif page_num == total_pages - 3 and current_page < total_pages - 4 %}
-                            <li class="page-item disabled">
-                                <span class="page-link">...</span>
-                            </li>
-                            {% endif %}
-                        {% endfor %}
-                        
-                        <li class="page-item {{ 'disabled' if current_page == total_pages }}">
-                            {% if current_page < total_pages %}
-                            <a class="page-link" href="#" onclick="goToPage({{ current_page + 1 }}); return false;">
-                                <i class="bi bi-chevron-right"></i>
-                            </a>
-                            {% else %}
-                            <span class="page-link">
-                                <i class="bi bi-chevron-right"></i>
-                            </span>
-                            {% endif %}
-                        </li>
-                    </ul>
-                </nav>
+                <div id="next-btn-container">
+                {% if has_next_page %}
+                    <div class="text-center mt-4 mb-2">
+                        <button class="btn btn-outline-primary btn-modern" onclick="applyFilters(true)">Load More Detections</button>
+                    </div>
                 {% endif %}
+                </div>
                 
                 {% else %}
                 <div class="text-center py-5">
@@ -495,10 +453,22 @@ function changePerPage(value) {
     applyFilters(1);
 }
 
-function applyFilters(page = 1) {
+let currentNextTimestamp = '{{ next_last_timestamp or "" }}';
+let currentNextId = '{{ next_last_id or "" }}';
+let currentRowCount = {{ detections|length if detections else 0 }};
+
+function applyFilters(isLoadMore = false) {
     const form = document.getElementById('filterForm');
     const formData = new FormData(form);
-    formData.set('page', page);
+    
+    if (isLoadMore === true && currentNextTimestamp && currentNextId) {
+        formData.set('last_timestamp', currentNextTimestamp);
+        formData.set('last_id', currentNextId);
+    } else {
+        currentRowCount = 0;
+        isLoadMore = false;
+    }
+
     const params = new URLSearchParams(formData);
 
     // Show loading state
@@ -515,7 +485,7 @@ function applyFilters(page = 1) {
                 console.error('Error loading detections:', data.error);
                 return;
             }
-            renderDetectionsTable(data);
+            renderDetectionsTable(data, isLoadMore);
         })
         .catch(error => {
             console.error('Error loading detections:', error);
@@ -529,26 +499,28 @@ function applyFilters(page = 1) {
         });
 }
 
-function renderDetectionsTable(data) {
+function renderDetectionsTable(data, isLoadMore = false) {
     const detectionsContent = document.getElementById('detections-content');
     if (!detectionsContent) return;
 
     if (!data.detections || data.detections.length === 0) {
-        detectionsContent.innerHTML = `
-            <div class="text-center py-5">
-                <i class="bi bi-inbox display-4 text-muted"></i>
-                <p class="text-muted mt-3">No detections found matching your criteria.</p>
-                <button class="btn btn-outline-primary" onclick="clearFilters()">
-                    <i class="bi bi-x-circle me-1"></i>Clear Filters
-                </button>
-            </div>`;
+        if (!isLoadMore) {
+            detectionsContent.innerHTML = `
+                <div class="text-center py-5">
+                    <i class="bi bi-inbox display-4 text-muted"></i>
+                    <p class="text-muted mt-3">No detections found matching your criteria.</p>
+                    <button class="btn btn-outline-primary" onclick="clearFilters()">
+                        <i class="bi bi-x-circle me-1"></i>Clear Filters
+                    </button>
+                </div>`;
+        }
         return;
     }
 
     let rowsHtml = '';
-    const startIndex = (data.current_page - 1) * data.per_page;
     data.detections.forEach((d, i) => {
-        const rowNum = startIndex + i + 1;
+        currentRowCount++;
+        const rowNum = currentRowCount;
         const ts = d.Timestamp || '-';
         const plate = d.License_Plate || '-';
         const status = d.Verification_Status || '-';
@@ -562,12 +534,11 @@ function renderDetectionsTable(data) {
 
         let imgHtml = '<i class="bi bi-image text-muted"></i>';
         if (ann && x1 != null && y1 != null) {
-            imgHtml = `<div class="dynamic-crop-container shadow-sm" data-src="${ann}" data-x1="${x1}" data-y1="${y1}" data-x2="${x2}" data-y2="${y2}" style="width:60px;height:35px;border-radius:4px;overflow:hidden;position:relative;background:#f0f0f0;cursor:pointer;" onclick="previewImage('${ann}')" title="Click to view full image"><img src="${ann}" style="position:absolute;visibility:hidden;"></div>`;
+            imgHtml = `<div class="dynamic-crop-container" data-src="${ann}" data-x1="${x1}" data-y1="${y1}" data-x2="${x2}" data-y2="${y2}" style="width:60px;height:35px;border-radius:4px;overflow:hidden;position:relative;background:#f0f0f0;cursor:pointer;transform:translateZ(0);will-change:transform;" onclick="previewImage('${ann}')" title="Click to view full image"><img src="${ann}" loading="lazy" style="position:absolute;visibility:hidden;"></div>`;
         } else if (ann) {
-            imgHtml = `<img src="${ann}" alt="Annotated" loading="lazy" style="width:60px;height:35px;object-fit:cover;border-radius:4px;cursor:pointer;" onclick="previewImage('${ann}')">`;
+            imgHtml = `<img src="${ann}" alt="Annotated" loading="lazy" width="60" height="35" style="width:60px;height:35px;object-fit:cover;border-radius:4px;cursor:pointer;transform:translateZ(0);will-change:transform;" onclick="previewImage('${ann}')">`;
         }
 
-        // Serialize detection for the view-details button (no inline object literal)
         const detectionJson = JSON.stringify(d).replace(/'/g, '&#39;');
 
         rowsHtml += `
@@ -576,16 +547,16 @@ function renderDetectionsTable(data) {
                 <td><small class="text-muted">${ts}</small></td>
                 <td>${imgHtml}</td>
                 <td><span class="fw-bold text-primary">${plate}</span></td>
-                <td><span class="badge badge-modern bg-${statusBg}-gradient">${status}</span></td>
-                <td><span class="badge badge-modern bg-${accessBg}-gradient">${access}</span></td>
-                <td><span class="badge badge-modern bg-info-gradient">${conf}</span></td>
+                <td><span class="badge badge-modern bg-${statusBg}">${status}</span></td>
+                <td><span class="badge badge-modern bg-${accessBg}">${access}</span></td>
+                <td><span class="badge badge-modern bg-info">${conf}</span></td>
                 <td><small class="text-muted">${camera}</small></td>
                 <td>
                     <div class="btn-group btn-group-sm">
-                        <button class="btn btn-outline-primary btn-modern btn-modern-enhanced" data-detection='${detectionJson}' onclick="viewDetailsFromButton(this)" title="View Details">
+                        <button class="btn btn-outline-primary btn-modern btn-modern-enhanced view-details-btn" data-detection='${detectionJson}' title="View Details">
                             <i class="bi bi-eye"></i>
                         </button>
-                        <button class="btn btn-outline-danger btn-modern btn-modern-enhanced" onclick="deleteDetection('${d.id}')" title="Delete Detection">
+                        <button class="btn btn-outline-danger btn-modern btn-modern-enhanced delete-btn" data-id="${d.id}" title="Delete Detection">
                             <i class="bi bi-trash"></i>
                         </button>
                     </div>
@@ -593,64 +564,54 @@ function renderDetectionsTable(data) {
             </tr>`;
     });
 
-    // Build pagination
-    let paginationHtml = '';
-    if (data.total_pages > 1) {
-        const cp = data.current_page, tp = data.total_pages;
-        let pageLinks = '';
-        for (let p = 1; p <= tp; p++) {
-            if (p === cp) {
-                pageLinks += `<li class="page-item active"><span class="page-link">${p}</span></li>`;
-            } else if (p <= 3 || p > tp - 3 || (p >= cp - 1 && p <= cp + 1)) {
-                pageLinks += `<li class="page-item"><a class="page-link" href="#" onclick="goToPage(${p}); return false;">${p}</a></li>`;
-            } else if (p === 4 && cp > 5) {
-                pageLinks += `<li class="page-item disabled"><span class="page-link">...</span></li>`;
-            } else if (p === tp - 3 && cp < tp - 4) {
-                pageLinks += `<li class="page-item disabled"><span class="page-link">...</span></li>`;
-            }
-        }
-        paginationHtml = `
-            <nav aria-label="Detection pagination">
-                <ul class="pagination justify-content-center">
-                    <li class="page-item ${cp === 1 ? 'disabled' : ''}">
-                        ${cp > 1 ? `<a class="page-link" href="#" onclick="goToPage(${cp - 1}); return false;"><i class="bi bi-chevron-left"></i></a>` : `<span class="page-link"><i class="bi bi-chevron-left"></i></span>`}
-                    </li>
-                    ${pageLinks}
-                    <li class="page-item ${cp === tp ? 'disabled' : ''}">
-                        ${cp < tp ? `<a class="page-link" href="#" onclick="goToPage(${cp + 1}); return false;"><i class="bi bi-chevron-right"></i></a>` : `<span class="page-link"><i class="bi bi-chevron-right"></i></span>`}
-                    </li>
-                </ul>
-            </nav>`;
+    currentNextTimestamp = data.next_last_timestamp;
+    currentNextId = data.next_last_id;
+
+    let nextBtnHtml = '';
+    if (data.has_next_page) {
+        nextBtnHtml = `<div class="text-center mt-4 mb-2"><button class="btn btn-outline-primary btn-modern" onclick="applyFilters(true)">Load More Detections</button></div>`;
     }
 
-    detectionsContent.innerHTML = `
-        <div class="table-responsive">
-            <table class="table table-modern table-hover">
-                <thead>
-                    <tr>
-                        <th width="5%">#</th>
-                        <th width="12%">Timestamp</th>
-                        <th width="8%">Plate</th>
-                        <th width="15%">License Plate</th>
-                        <th width="10%">Status</th>
-                        <th width="10%">Access</th>
-                        <th width="10%">Confidence</th>
-                        <th width="15%">Camera</th>
-                        <th width="10%">Actions</th>
-                    </tr>
-                </thead>
-                <tbody>${rowsHtml}</tbody>
-            </table>
-        </div>
-        ${paginationHtml}`;
+    if (isLoadMore) {
+        const tbody = document.querySelector('#detections-content tbody');
+        if (tbody) {
+            tbody.insertAdjacentHTML('beforeend', rowsHtml);
+            const rows = tbody.querySelectorAll('tr');
+            if (rows.length > 100) {
+                for (let i = 0; i < 20; i++) rows[i].remove();
+            }
+        }
+        const nextBtnContainer = document.getElementById('next-btn-container');
+        if (nextBtnContainer) nextBtnContainer.innerHTML = nextBtnHtml;
+    } else {
+        detectionsContent.innerHTML = `
+            <div class="table-responsive">
+                <table class="table table-modern table-hover">
+                    <thead>
+                        <tr>
+                            <th width="5%">#</th>
+                            <th width="12%">Timestamp</th>
+                            <th width="8%">Plate</th>
+                            <th width="15%">License Plate</th>
+                            <th width="10%">Status</th>
+                            <th width="10%">Access</th>
+                            <th width="10%">Confidence</th>
+                            <th width="15%">Camera</th>
+                            <th width="10%">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rowsHtml}</tbody>
+                </table>
+            </div>
+            <div id="next-btn-container">${nextBtnHtml}</div>`;
+    }
 
-    processDynamicCrops();
+    if (typeof processDynamicCrops === 'function') processDynamicCrops();
 }
 
-// Pagination via AJAX
+// GoToPage is deprecated since cursor pagination relies on 'Load More'
 function goToPage(pageNum) {
-    applyFilters(pageNum);
-    window.scrollTo(0, 0);
+    applyFilters(); 
 }
 
 // Clear filters - reset to default (verified detections)
@@ -749,6 +710,33 @@ function setupZoom() {
     };
     window.addEventListener('mousemove', _mouseMoveHandler, { passive: false });
 }
+
+// Memory Leak Fix: Remove modal mousemove listeners on close and Add Event Delegation
+document.addEventListener('DOMContentLoaded', function() {
+    const detailsModal = document.getElementById('detailsModal');
+    if (detailsModal) {
+        detailsModal.addEventListener('hidden.bs.modal', function () {
+            if (_mouseUpHandler) window.removeEventListener('mouseup', _mouseUpHandler);
+            if (_mouseMoveHandler) window.removeEventListener('mousemove', _mouseMoveHandler);
+            isPanning = false;
+        });
+    }
+    
+    // Delegated event listener for row buttons to avoid massive memory allocations
+    const tableContainer = document.getElementById('detections-content');
+    if (tableContainer) {
+        tableContainer.addEventListener('click', function(e) {
+            const deleteBtn = e.target.closest('.delete-btn');
+            const detailsBtn = e.target.closest('.view-details-btn');
+            
+            if (deleteBtn) {
+                deleteDetection(deleteBtn.getAttribute('data-id'));
+            } else if (detailsBtn) {
+                viewDetailsFromButton(detailsBtn);
+            }
+        });
+    }
+});
 
 // View details - build rich modal with zoomable image
 function viewDetails(d) {
