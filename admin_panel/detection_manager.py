@@ -56,9 +56,22 @@ def load_detections():
 @detection_bp.route('/detections')
 def detections():
     """Detection history page"""
-    # Get filter parameters
-    page = int(request.args.get('page', 1))
-    per_page = int(request.args.get('per_page', 20))
+    # 1. INPUT HARDENING: Safely parse and clamp parameters
+    try:
+        per_page = int(request.args.get('per_page', 20))
+    except (ValueError, TypeError):
+        per_page = 20
+    
+    per_page = max(1, min(100, per_page)) # Clamp between 1 and 100
+    
+    # Cursor parameters
+    last_timestamp = request.args.get('last_timestamp', '').strip()
+    try:
+        last_id = request.args.get('last_id')
+        last_id = int(last_id) if last_id else None
+    except (ValueError, TypeError):
+        last_id = None
+
     search = request.args.get('search', '').strip()
     status_filter = request.args.get('status', 'VERIFIED').strip()  # For dropdown display
     query_status = status_filter  # For database query
@@ -94,29 +107,33 @@ def detections():
             if date_to:
                 where_clauses.append("DATE(timestamp) <= %s")
                 params.append(date_to)
+
+            # 3. CURSOR-BASED PAGINATION
+            if last_timestamp and last_id is not None:
+                where_clauses.append("(timestamp < %s OR (timestamp = %s AND id < %s))")
+                params.extend([last_timestamp, last_timestamp, last_id])
             
             where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
             
-            # Get total count
-            count_query = f"SELECT COUNT(*) as count FROM detections WHERE {where_sql}"
-            db.execute(count_query, tuple(params) if params else None)
-            result = db.fetchone()
-            total_detections = result['count'] if result else 0
-            
-            # Get paginated results
-            offset = (page - 1) * per_page
+            # 4. KILL THE COUNT(*) TRAP: Fetch limit + 1 rows to detect if next page exists
+            fetch_limit = per_page + 1
             query = f"""
                 SELECT id, timestamp, license_plate, verification_status, access_granted,
                        detection_confidence, processing_time_ms, camera_source,
                        detection_count, log_reason, image_full_annotated, bbox_x1, bbox_y1, bbox_x2, bbox_y2
                 FROM detections
                 WHERE {where_sql}
-                ORDER BY timestamp DESC
-                LIMIT %s OFFSET %s
+                ORDER BY timestamp DESC, id DESC
+                LIMIT %s
             """
-            params.extend([per_page, offset])
+            params.append(fetch_limit)
             db.execute(query, tuple(params))
             rows = db.fetchall()
+            
+            has_next_page = False
+            if len(rows) > per_page:
+                has_next_page = True
+                rows = rows[:per_page] # Discard the extra row
             
             # Convert to dict format
             detections = []
@@ -124,6 +141,7 @@ def detections():
                 detections.append({
                     'id': row['id'],
                     'Timestamp': row['timestamp'].strftime('%Y-%m-%d %H:%M:%S.%f')[:-3] if row['timestamp'] else '',
+                    'timestamp_raw': row['timestamp'].isoformat() if row['timestamp'] else '',
                     'License_Plate': row['license_plate'],
                     'Verification_Status': row['verification_status'],
                     'Access_Granted': row['access_granted'],
@@ -139,54 +157,60 @@ def detections():
                     'bbox_y2': row['bbox_y2']
                 })
             
-            # Get statistics
-            db.execute("SELECT COUNT(*) as count FROM detections WHERE verification_status = 'VERIFIED'")
-            result = db.fetchone()
-            verified_detections = result['count'] if result else 0
-            
-            db.execute("SELECT COUNT(*) as count FROM detections WHERE verification_status = 'NOT_VERIFIED'")
-            result = db.fetchone()
-            unverified_detections = result['count'] if result else 0
+            next_last_timestamp = rows[-1]['timestamp'].isoformat() if has_next_page and rows else None
+            next_last_id = rows[-1]['id'] if has_next_page and rows else None
             
             # Get unique cameras
             db.execute("SELECT DISTINCT camera_source FROM detections ORDER BY camera_source")
             camera_rows = db.fetchall()
             cameras = [row['camera_source'] for row in camera_rows]
             
-            verification_rate = (verified_detections / total_detections * 100) if total_detections > 0 else 0
-            total_pages = (total_detections + per_page - 1) // per_page
-            
     except Exception as e:
         flash(f'Error loading detections: {str(e)}', 'error')
         detections = []
-        total_detections = 0
-        verified_detections = 0
-        unverified_detections = 0
-        verification_rate = 0
-        total_pages = 0
         cameras = []
+        has_next_page = False
+        next_last_timestamp = None
+        next_last_id = None
     
     return render_template('detections.html', 
                          detections=detections,
-                         total_detections=total_detections,
-                         verified_detections=verified_detections,
-                         unverified_detections=unverified_detections,
-                         verification_rate=round(verification_rate, 1),
-                         total_pages=total_pages,
-                         current_page=page,
+                         total_detections=0, # Deprecated logic to avoid COUNT(*)
+                         verified_detections=0, # Deprecated
+                         unverified_detections=0, # Deprecated
+                         verification_rate=0.0, # Deprecated
+                         total_pages=0, # Deprecated
+                         current_page=1, # Deprecated
                          per_page=per_page,
                          search=search,
                          status_filter=status_filter,
                          camera_filter=camera_filter,
                          date_from=date_from,
                          date_to=date_to,
-                         cameras=cameras)
+                         cameras=cameras,
+                         has_next_page=has_next_page,
+                         next_last_timestamp=next_last_timestamp,
+                         next_last_id=next_last_id)
 
 @detection_bp.route('/api/detections/data')
 def detections_data_api():
     """JSON API endpoint for applyFilters() — returns detection data as JSON."""
-    page = int(request.args.get('page', 1))
-    per_page = int(request.args.get('per_page', 20))
+    # 1. INPUT HARDENING: Safely parse and clamp parameters
+    try:
+        per_page = int(request.args.get('per_page', 20))
+    except (ValueError, TypeError):
+        per_page = 20
+    
+    per_page = max(1, min(100, per_page)) # Clamp between 1 and 100
+    
+    # Cursor parameters
+    last_timestamp = request.args.get('last_timestamp', '').strip()
+    try:
+        last_id = request.args.get('last_id')
+        last_id = int(last_id) if last_id else None
+    except (ValueError, TypeError):
+        last_id = None
+
     search = request.args.get('search', '').strip()
     status_filter = request.args.get('status', 'VERIFIED').strip()
     query_status = '' if status_filter == 'all' else status_filter
@@ -215,26 +239,32 @@ def detections_data_api():
                 where_clauses.append("DATE(timestamp) <= %s")
                 params.append(date_to)
 
+            # 3. CURSOR-BASED PAGINATION
+            if last_timestamp and last_id is not None:
+                where_clauses.append("(timestamp < %s OR (timestamp = %s AND id < %s))")
+                params.extend([last_timestamp, last_timestamp, last_id])
+
             where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
 
-            count_query = f"SELECT COUNT(*) as count FROM detections WHERE {where_sql}"
-            db.execute(count_query, tuple(params) if params else None)
-            result = db.fetchone()
-            total_count = result['count'] if result else 0
-
-            offset = (page - 1) * per_page
+            # 4. KILL THE COUNT(*) TRAP: Fetch limit + 1
+            fetch_limit = per_page + 1
             query = f"""
                 SELECT id, timestamp, license_plate, verification_status, access_granted,
                        detection_confidence, camera_source, image_full_annotated,
                        bbox_x1, bbox_y1, bbox_x2, bbox_y2
                 FROM detections
                 WHERE {where_sql}
-                ORDER BY timestamp DESC
-                LIMIT %s OFFSET %s
+                ORDER BY timestamp DESC, id DESC
+                LIMIT %s
             """
-            params.extend([per_page, offset])
+            params.append(fetch_limit)
             db.execute(query, tuple(params))
             rows = db.fetchall()
+            
+            has_next_page = False
+            if len(rows) > per_page:
+                has_next_page = True
+                rows = rows[:per_page] # Discard extra row
 
             detections = []
             for row in rows:
@@ -253,20 +283,25 @@ def detections_data_api():
                     'bbox_x2': row['bbox_x2'],
                     'bbox_y2': row['bbox_y2'],
                 })
-
-            total_pages = max(1, (total_count + per_page - 1) // per_page)
+            
+            next_last_timestamp = rows[-1]['timestamp'].isoformat() if has_next_page and rows else None
+            next_last_id = rows[-1]['id'] if has_next_page and rows else None
 
         return jsonify({
             'success': True,
             'detections': detections,
-            'total_count': total_count,
-            'total_pages': total_pages,
-            'current_page': page,
             'per_page': per_page,
+            'has_next_page': has_next_page,
+            'next_last_timestamp': next_last_timestamp,
+            'next_last_id': next_last_id,
         })
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e), 'detections': [], 'total_count': 0,
-                        'total_pages': 0, 'current_page': page, 'per_page': per_page}), 500
+        return jsonify({
+            'success': False, 
+            'error': str(e), 
+            'detections': [], 
+            'has_next_page': False
+        }), 500
 
 
 @detection_bp.route('/detections/export')
