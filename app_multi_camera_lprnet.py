@@ -304,15 +304,111 @@ lprnet_model = None
 device = 'cpu'
 
 # Global inference structures (multiprocessing model)
+import concurrent.futures.process
+from multiprocessing import shared_memory
+import uuid
+
 inference_executor = None
+spawn_context = None
+worker_id_counter = None
 inference_semaphore = None
+global_frame_queue = queue.Queue(maxsize=32)
+pool_lock = Lock()
+active_futures = {}  # {future: {'start_time': t, 'shms': [shm_name1, ...]}}
+INFERENCE_TIMEOUT = 20.0
+BATCH_SIZE = 4
+
+def get_shared_memory(shape, dtype, data):
+    """Zero-copy memory transfer creation"""
+    import numpy as np
+    size = data.nbytes
+    shm = shared_memory.SharedMemory(create=True, size=size)
+    shm_arr = np.ndarray(shape, dtype=dtype, buffer=shm.buf)
+    np.copyto(shm_arr, data)
+    return shm.name
+
+def cleanup_shared_memory(shm_name):
+    """Safely unlink shared memory"""
+    try:
+        shm = shared_memory.SharedMemory(name=shm_name)
+        shm.close()
+        shm.unlink()
+    except Exception:
+        pass
 
 # Worker subprocess globals
 worker_yolo = None
 worker_lprnet = None
 worker_device = 'cpu'
 
-def init_worker(yolo_path, lprnet_path):
+def setup_worker_cpu():
+    import os
+    import psutil
+
+    try:
+        p = psutil.Process(os.getpid())
+        num_cores = psutil.cpu_count(logical=True)
+
+        # Set lower priority (best-effort)
+        try:
+            p.nice(5)
+        except Exception:
+            pass
+
+        # 🔹 Low-core fallback
+        if num_cores <= 2:
+            if num_cores == 2:
+                try:
+                    p.cpu_affinity([1])
+                except Exception:
+                    pass
+            print(f"📌 [Worker {os.getpid()}] Low-core fallback. nice=5")
+            return
+
+        # 🔹 Worker config
+        worker_id = int(os.environ.get("WORKER_ID", 0))
+        total_workers = max(1, int(os.environ.get("TOTAL_WORKERS", 1)))
+
+        # Reserve first 2 cores
+        available_cores = list(range(2, num_cores))
+
+        if not available_cores:
+            print(f"⚠️ No available cores after reservation")
+            return
+
+        # 🔹 Balanced core distribution
+        chunk_size = max(1, len(available_cores) // total_workers)
+
+        start = worker_id * chunk_size
+        end = start + chunk_size
+
+        # Last worker takes remaining cores
+        if worker_id == total_workers - 1:
+            end = len(available_cores)
+
+        assigned_cores = available_cores[start:end]
+
+        # 🔹 Safety fallback (never empty)
+        if not assigned_cores:
+            assigned_cores = [available_cores[worker_id % len(available_cores)]]
+
+        # 🔹 Apply affinity
+        try:
+            p.cpu_affinity(assigned_cores)
+        except Exception as e:
+            print(f"⚠️ Affinity set failed: {e}")
+            return
+
+        print(
+            f"📌 [Worker {os.getpid()}] "
+            f"ID={worker_id}/{total_workers} → cores={assigned_cores}, nice=5"
+        )
+
+    except Exception as e:
+        print(f"⚠️ CPU setup failed for worker {os.getpid()}: {e}")
+
+
+def init_worker(yolo_path, lprnet_path, worker_id_counter=None, total_workers=2):
     """
     Initializer function for the worker processes in the ProcessPoolExecutor.
     Loads the YOLO and LPRNet models exactly once per worker process.
@@ -321,26 +417,18 @@ def init_worker(yolo_path, lprnet_path):
     global worker_yolo, worker_lprnet, worker_device
     import sys
     import os
-    import psutil
     
-    # CPU Affinity & process pinning (Section 1C)
-    try:
-        p = psutil.Process(os.getpid())
-        num_cores = psutil.cpu_count()
-        if num_cores > 2:
-            worker_cores = list(range(2, num_cores))
-            p.cpu_affinity(worker_cores)
-            p.nice(5)
-            print(f"📌 [Worker {os.getpid()}] Pinned to cores {worker_cores}, nice=5")
-        elif num_cores == 2:
-            p.cpu_affinity([1])
-            p.nice(5)
-            print(f"📌 [Worker {os.getpid()}] Pinned to core [1], nice=5")
-        else:
-            p.nice(5)
-            print(f"📌 [Worker {os.getpid()}] nice=5 set")
-    except Exception as e:
-        print(f"⚠️ CPU affinity/nice setting failed in worker {os.getpid()}: {e}")
+    if worker_id_counter is not None:
+        with worker_id_counter.get_lock():
+            worker_id = worker_id_counter.value
+            worker_id_counter.value += 1
+        os.environ["WORKER_ID"] = str(worker_id)
+        os.environ["TOTAL_WORKERS"] = str(total_workers)
+        
+        import time
+        time.sleep(worker_id * 0.5) # Fix 5: Worker initialization stagger
+
+    setup_worker_cpu()
 
     project_dir = os.path.dirname(os.path.abspath(__file__))
     if project_dir not in sys.path:
@@ -481,178 +569,216 @@ def pad_to_aspect(crop, target_w=94, target_h=24):
 def worker_batch_inference(batch_inputs, inference_imgsz, confidence_threshold):
     """
     Executes inference for a batch of frames in the worker process.
-    batch_inputs: list of tuples: (camera_id, frame_bytes, shape, dtype, roi, roi_polygon)
     """
-    global worker_yolo, worker_lprnet, worker_device
-    import numpy as np
-    import cv2
-    import torch
-    from LPRNet import predict_plate, predict_plates_batch
+    import threading
+    import os
+    import time
     
-    results = []
-    
-    # 1. Reconstruct all frames and apply ROI crops
-    preprocessed_inputs = []
-    frames_for_detection = []
-    
-    for camera_id, frame_bytes, shape, dtype, roi, roi_polygon in batch_inputs:
-        try:
-            # Reconstruct frame from bytes
-            frame = np.frombuffer(frame_bytes, dtype=dtype).reshape(shape)
-            
-            # ROI Extraction in the worker
-            h_full, w_full, _ = frame.shape
-            frame_for_detection = frame
-            roi_offset_x, roi_offset_y = 0, 0
-            
-            try:
-                if roi_polygon and len(roi_polygon) >= 3:
-                    poly_np = np.array(roi_polygon, dtype=np.int32)
-                    x, y, w, h = cv2.boundingRect(poly_np)
-                    
-                    x = max(0, min(x, w_full - 1))
-                    y = max(0, min(y, h_full - 1))
-                    w = max(1, min(w, w_full - x))
-                    h = max(1, min(h, h_full - y))
-                    
-                    crop = frame[y:y + h, x:x + w]
-                    mask = np.zeros((h, w), dtype=np.uint8)
-                    shifted_poly = poly_np - np.array([x, y], dtype=np.int32)
-                    cv2.fillPoly(mask, [shifted_poly], 255)
-                    
-                    frame_for_detection = cv2.bitwise_and(crop, crop, mask=mask)
-                    roi_offset_x, roi_offset_y = x, y
-                    
-                elif roi:
-                    # roi is dict or list
-                    if isinstance(roi, dict):
-                        x1_roi = roi.get('x1', 0)
-                        y1_roi = roi.get('y1', 0)
-                        x2_roi = roi.get('x2', w_full)
-                        y2_roi = roi.get('y2', h_full)
-                    else:
-                        x1_roi, y1_roi, x2_roi, y2_roi = roi
-                        
-                    x1_roi = max(0, min(x1_roi, w_full - 1))
-                    y1_roi = max(0, min(y1_roi, h_full - 1))
-                    x2_roi = max(0, min(x2_roi, w_full))
-                    y2_roi = max(0, min(y2_roi, h_full))
-                    
-                    if x2_roi > x1_roi and y2_roi > y1_roi:
-                        frame_for_detection = frame[y1_roi:y2_roi, x1_roi:x2_roi]
-                        roi_offset_x, roi_offset_y = x1_roi, y1_roi
-            except Exception as e:
-                print(f"⚠️ Error applying ROI in worker: {e}")
-                
-            preprocessed_inputs.append({
-                'camera_id': camera_id,
-                'frame_for_detection': frame_for_detection,
-                'roi_offset_x': roi_offset_x,
-                'roi_offset_y': roi_offset_y
-            })
-            frames_for_detection.append(frame_for_detection)
-        except Exception as e:
-            print(f"❌ Error reconstructing frame for camera {camera_id}: {e}")
-            preprocessed_inputs.append({
-                'camera_id': camera_id,
-                'frame_for_detection': None,
-                'roi_offset_x': 0,
-                'roi_offset_y': 0
-            })
-            frames_for_detection.append(None)
-            
-    # 2. Run batched YOLOv8 detection
-    yolo_results_batch = []
-    valid_frames = [f for f in frames_for_detection if f is not None]
-    if valid_frames:
-        try:
-            with torch.inference_mode():
-                yolo_results_batch = worker_yolo.predict(valid_frames, imgsz=inference_imgsz, verbose=False)
-        except Exception as e:
-            print(f"⚠️ YOLO batch inference error: {e}")
-            
-    # Map back results to corresponding inputs
-    yolo_result_idx = 0
-    
-    # 3. Collect all valid crops across all cameras
-    all_crops = []
-    crop_metadata = []
-    
-    for idx, input_data in enumerate(preprocessed_inputs):
-        camera_id = input_data['camera_id']
-        frame_for_detection = input_data['frame_for_detection']
-        roi_offset_x = input_data['roi_offset_x']
-        roi_offset_y = input_data['roi_offset_y']
+    # Fix 2: Non-blocking workers (Watchdog)
+    def watchdog():
+        time.sleep(10.0)
+        print(f"💀 [WORKER {os.getpid()}] Watchdog triggered! Forcing exit.")
+        os._exit(1)
         
-        if frame_for_detection is None:
-            continue
-            
-        try:
-            if yolo_result_idx < len(yolo_results_batch):
-                yolo_results = yolo_results_batch[yolo_result_idx]
-                yolo_result_idx += 1
-                
-                if yolo_results and yolo_results.boxes is not None:
-                    for result in yolo_results.boxes:
-                        x1, y1, x2, y2 = map(int, result.xyxy[0])
-                        conf = float(result.conf[0]) if result.conf is not None else 0.0
-                        
-                        if conf < confidence_threshold:
-                            continue
-                            
-                        h_det, w_det, _ = frame_for_detection.shape
-                        # Expand ROI
-                        x1, y1, x2, y2 = expand_roi(x1, y1, x2, y2, h_det, w_det, margin=0.07)
-                        
-                        if x2 <= x1 or y2 <= y1:
-                            continue
-                            
-                        cropped_plate = frame_for_detection[y1:y2, x1:x2]
-                        if cropped_plate.size == 0 or cropped_plate.shape[0] < 10 or cropped_plate.shape[1] < 10:
-                            continue
-                            
-                        # Aspect padding
-                        cropped_plate = pad_to_aspect(cropped_plate, target_w=94, target_h=24)
-                        
-                        if not cropped_plate.flags['C_CONTIGUOUS']:
-                            cropped_plate = np.ascontiguousarray(cropped_plate)
-                        if cropped_plate.dtype != np.uint8:
-                            cropped_plate = cropped_plate.astype(np.uint8)
-                            
-                        all_crops.append(cropped_plate)
-                        crop_metadata.append({
-                            'camera_id': camera_id,
-                            'x1': x1, 'y1': y1, 'x2': x2, 'y2': y2,
-                            'roi_offset_x': roi_offset_x,
-                            'roi_offset_y': roi_offset_y,
-                            'conf': conf
-                        })
-        except Exception as e:
-            print(f"❌ Error collecting crops for camera {camera_id}: {e}")
-
-    # Initialize results dict
-    camera_detections = {input_data['camera_id']: [] for input_data in preprocessed_inputs}
+    wd_timer = threading.Timer(10.0, watchdog)
+    wd_timer.daemon = True
+    wd_timer.start()
     
-    # 4. Run batched LPRNet OCR Prediction
-    if all_crops:
-        try:
-            plate_texts = predict_plates_batch(worker_lprnet, all_crops, worker_device)
-            for i, text in enumerate(plate_texts):
-                meta = crop_metadata[i]
-                camera_detections[meta['camera_id']].append({
-                    'plate_text': text,
-                    'bbox': (meta['x1'], meta['y1'], meta['x2'], meta['y2']),
-                    'roi_offset': (meta['roi_offset_x'], meta['roi_offset_y']),
-                    'confidence': meta['conf']
-                })
-        except Exception as ocr_error:
-            print(f"⚠️ Batched OCR Error in worker: {ocr_error}")
-
-    for input_data in preprocessed_inputs:
-        cam_id = input_data['camera_id']
-        results.append((cam_id, camera_detections[cam_id]))
+    try:
+        global worker_yolo, worker_lprnet, worker_device
+        import numpy as np
+        import cv2
+        import torch
+        from LPRNet import predict_plate, predict_plates_batch
+        
+        results = []
+        
+        # 1. Reconstruct all frames and apply ROI crops
+        preprocessed_inputs = []
+        frames_for_detection = []
+        
+        from multiprocessing import shared_memory
+        # Fix 4: Safe Inter-Process Communication (frame_fallback)
+        for camera_id, shm_name, shape, dtype, roi, roi_polygon, frame_fallback in batch_inputs:
+            try:
+                frame = None
+                # Fix 1: SHM Lifecycle Safety
+                if shm_name:
+                    try:
+                        shm = shared_memory.SharedMemory(name=shm_name)
+                        frame = np.ndarray(shape, dtype=dtype, buffer=shm.buf).copy()
+                        shm.close()
+                    except FileNotFoundError:
+                        pass
+                    except Exception as e:
+                        print(f"⚠️ [WORKER] SHM error for {shm_name}: {e}")
+                        
+                if frame is None and frame_fallback is not None:
+                    np_arr = np.frombuffer(frame_fallback, np.uint8)
+                    frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+                    
+                if frame is None:
+                    preprocessed_inputs.append({
+                        'camera_id': camera_id, 'frame_for_detection': None, 'roi_offset_x': 0, 'roi_offset_y': 0
+                    })
+                    frames_for_detection.append(None)
+                    continue
             
-    return results
+                # ROI Extraction in the worker
+                h_full, w_full, _ = frame.shape
+                frame_for_detection = frame
+                roi_offset_x, roi_offset_y = 0, 0
+                
+                try:
+                    if roi_polygon and len(roi_polygon) >= 3:
+                        poly_np = np.array(roi_polygon, dtype=np.int32)
+                        x, y, w, h = cv2.boundingRect(poly_np)
+                        
+                        x = max(0, min(x, w_full - 1))
+                        y = max(0, min(y, h_full - 1))
+                        w = max(1, min(w, w_full - x))
+                        h = max(1, min(h, h_full - y))
+                        
+                        crop = frame[y:y + h, x:x + w]
+                        mask = np.zeros((h, w), dtype=np.uint8)
+                        shifted_poly = poly_np - np.array([x, y], dtype=np.int32)
+                        cv2.fillPoly(mask, [shifted_poly], 255)
+                        
+                        frame_for_detection = cv2.bitwise_and(crop, crop, mask=mask)
+                        roi_offset_x, roi_offset_y = x, y
+                        
+                    elif roi:
+                        # roi is dict or list
+                        if isinstance(roi, dict):
+                            x1_roi = roi.get('x1', 0)
+                            y1_roi = roi.get('y1', 0)
+                            x2_roi = roi.get('x2', w_full)
+                            y2_roi = roi.get('y2', h_full)
+                        else:
+                            x1_roi, y1_roi, x2_roi, y2_roi = roi
+                            
+                        x1_roi = max(0, min(x1_roi, w_full - 1))
+                        y1_roi = max(0, min(y1_roi, h_full - 1))
+                        x2_roi = max(0, min(x2_roi, w_full))
+                        y2_roi = max(0, min(y2_roi, h_full))
+                        
+                        if x2_roi > x1_roi and y2_roi > y1_roi:
+                            frame_for_detection = frame[y1_roi:y2_roi, x1_roi:x2_roi]
+                            roi_offset_x, roi_offset_y = x1_roi, y1_roi
+                except Exception as e:
+                    print(f"⚠️ Error applying ROI in worker: {e}")
+                    
+                preprocessed_inputs.append({
+                    'camera_id': camera_id,
+                    'frame_for_detection': frame_for_detection,
+                    'roi_offset_x': roi_offset_x,
+                    'roi_offset_y': roi_offset_y
+                })
+                frames_for_detection.append(frame_for_detection)
+            except Exception as e:
+                print(f"❌ Error reconstructing frame for camera {camera_id}: {e}")
+                preprocessed_inputs.append({
+                    'camera_id': camera_id,
+                    'frame_for_detection': None,
+                    'roi_offset_x': 0,
+                    'roi_offset_y': 0
+                })
+                frames_for_detection.append(None)
+            
+        # 2. Run batched YOLOv8 detection
+        yolo_results_batch = []
+        valid_frames = [f for f in frames_for_detection if f is not None]
+        if valid_frames:
+            try:
+                with torch.inference_mode():
+                    yolo_results_batch = worker_yolo.predict(valid_frames, imgsz=inference_imgsz, verbose=False)
+            except Exception as e:
+                print(f"⚠️ YOLO batch inference error: {e}")
+                
+        # Map back results to corresponding inputs
+        yolo_result_idx = 0
+        
+        # 3. Collect all valid crops across all cameras
+        all_crops = []
+        crop_metadata = []
+        
+        for idx, input_data in enumerate(preprocessed_inputs):
+            camera_id = input_data['camera_id']
+            frame_for_detection = input_data['frame_for_detection']
+            roi_offset_x = input_data['roi_offset_x']
+            roi_offset_y = input_data['roi_offset_y']
+            
+            if frame_for_detection is None:
+                continue
+                
+            try:
+                if yolo_result_idx < len(yolo_results_batch):
+                    yolo_results = yolo_results_batch[yolo_result_idx]
+                    yolo_result_idx += 1
+                    
+                    if yolo_results and yolo_results.boxes is not None:
+                        for result in yolo_results.boxes:
+                            x1, y1, x2, y2 = map(int, result.xyxy[0])
+                            conf = float(result.conf[0]) if result.conf is not None else 0.0
+                            
+                            if conf < confidence_threshold:
+                                continue
+                                
+                            h_det, w_det, _ = frame_for_detection.shape
+                            # Expand ROI
+                            x1, y1, x2, y2 = expand_roi(x1, y1, x2, y2, h_det, w_det, margin=0.07)
+                            
+                            if x2 <= x1 or y2 <= y1:
+                                continue
+                                
+                            cropped_plate = frame_for_detection[y1:y2, x1:x2]
+                            if cropped_plate.size == 0 or cropped_plate.shape[0] < 10 or cropped_plate.shape[1] < 10:
+                                continue
+                                
+                            # Aspect padding
+                            cropped_plate = pad_to_aspect(cropped_plate, target_w=94, target_h=24)
+                            
+                            if not cropped_plate.flags['C_CONTIGUOUS']:
+                                cropped_plate = np.ascontiguousarray(cropped_plate)
+                            if cropped_plate.dtype != np.uint8:
+                                cropped_plate = cropped_plate.astype(np.uint8)
+                                
+                            all_crops.append(cropped_plate)
+                            crop_metadata.append({
+                                'camera_id': camera_id,
+                                'x1': x1, 'y1': y1, 'x2': x2, 'y2': y2,
+                                'roi_offset_x': roi_offset_x,
+                                'roi_offset_y': roi_offset_y,
+                                'conf': conf
+                            })
+            except Exception as e:
+                print(f"❌ Error collecting crops for camera {camera_id}: {e}")
+
+        # Initialize results dict
+        camera_detections = {input_data['camera_id']: [] for input_data in preprocessed_inputs}
+        
+        # 4. Run batched LPRNet OCR Prediction
+        if all_crops:
+            try:
+                plate_texts = predict_plates_batch(worker_lprnet, all_crops, worker_device)
+                for i, text in enumerate(plate_texts):
+                    meta = crop_metadata[i]
+                    camera_detections[meta['camera_id']].append({
+                        'plate_text': text,
+                        'bbox': (meta['x1'], meta['y1'], meta['x2'], meta['y2']),
+                        'roi_offset': (meta['roi_offset_x'], meta['roi_offset_y']),
+                        'confidence': meta['conf']
+                    })
+            except Exception as ocr_error:
+                print(f"⚠️ Batched OCR Error in worker: {ocr_error}")
+
+        for input_data in preprocessed_inputs:
+            cam_id = input_data['camera_id']
+            results.append((cam_id, camera_detections[cam_id]))
+                
+        return results
+    finally:
+        wd_timer.cancel()
 
 def load_models():
     """No-op as models are lazy-loaded within worker processes"""
@@ -1435,12 +1561,8 @@ class CameraProcessor:
 
             try:
                 self.frame_count += 1
-                if PROCESS_EVERY_NTH_FRAME > 1 and self.frame_count % PROCESS_EVERY_NTH_FRAME != 0:
-                    self.cap.grab()
-                    time.sleep(0.05)
-                    continue
-
                 ret, frame = self.cap.read()
+
                 
                 # Check for frame read failure
                 if not ret or frame is None:
@@ -1458,16 +1580,7 @@ class CameraProcessor:
                     continue
 
                 # Normal processing when frame is successfully read
-                # Conditional CLAHE + Unsharp Mask (Brightness-Gated)
-                frame = enhance_frame_if_dark(
-                    frame,
-                    dark_threshold = 80,
-                    clahe_clip     = 2.0,
-                    clahe_tile     = (8, 8),
-                    sharpen_amount = 1.5,
-                    enable_clahe   = True,
-                    enable_sharpen = True
-                )
+
                 if self._validate_frame(frame, "captured_frame"):
                     frame_copy = frame.copy()
                     
@@ -1485,13 +1598,12 @@ class CameraProcessor:
                     # Cheap Motion Detection (Section 2.4)
                     is_motion = True
                     try:
-                        gray = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2GRAY)
-                        h_g, w_g = gray.shape[:2]
+                        h_g, w_g = frame_resized.shape[:2]
                         if w_g > 320:
                             s_g = 320.0 / w_g
-                            gray_small = cv2.resize(gray, (320, int(h_g * s_g)), interpolation=cv2.INTER_LINEAR)
+                            gray_small = cv2.resize(cv2.cvtColor(frame_resized, cv2.COLOR_BGR2GRAY), (320, int(h_g * s_g)), interpolation=cv2.INTER_LINEAR)
                         else:
-                            gray_small = gray
+                            gray_small = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2GRAY)
                             
                         if self.last_gray_frame is not None and self.last_gray_frame.shape == gray_small.shape:
                             diff = cv2.absdiff(self.last_gray_frame, gray_small)
@@ -1509,18 +1621,36 @@ class CameraProcessor:
                                 self.frame_queue.get_nowait()
                         except:
                             pass
-                        time.sleep(0.05)
+                        time.sleep(0.01) # Adaptive pacing sleep
                         continue
                         
+                    # Apply Conditional CLAHE + Unsharp Mask ONLY if motion detected
+                    frame_resized = enhance_frame_if_dark(
+                        frame_resized,
+                        dark_threshold = 80,
+                        clahe_clip     = 2.0,
+                        clahe_tile     = (8, 8),
+                        sharpen_amount = 1.5,
+                        enable_clahe   = True,
+                        enable_sharpen = True
+                    )
+                    
                     # Dynamic FPS Throttling (Section 2.3)
                     import psutil
                     current_time = time.time()
-                    if not hasattr(self, '_last_cpu_check') or current_time - self._last_cpu_check > 5.0:
+                    if not hasattr(self, '_last_cpu_check') or current_time - self._last_cpu_check > 2.0:
                         self._last_cpu_check = current_time
                         self._cpu_usage = psutil.cpu_percent(interval=None)
                     
                     cpu_usage = getattr(self, '_cpu_usage', 50.0)
-                    target_interval = 2.0 if cpu_usage >= 70.0 else 0.5
+                    if cpu_usage >= 95.0:
+                        target_interval = 0.20  # ~5 FPS
+                    elif cpu_usage >= 85.0:
+                        target_interval = 0.10  # ~10 FPS
+                    elif cpu_usage >= 70.0:
+                        target_interval = 0.06  # ~15 FPS
+                    else:
+                        target_interval = 0.03  # ~30 FPS
                     
                     if current_time - self.last_put_time > target_interval:
                         self.last_put_time = current_time
@@ -1537,42 +1667,21 @@ class CameraProcessor:
                             if logging.getLogger().isEnabledFor(logging.DEBUG):
                                 logging.debug(f"[{self.name}] Frame queue full (maxsize=2), dropping incoming frame.")
                                 
-                    # Dispatch task directly to central ProcessPoolExecutor (Section 1.2)
+                    # Dispatch task to central supervisor queue
                     if not self.frame_queue.empty():
-                        acquired = inference_semaphore.acquire(blocking=False)
-                        if acquired:
-                            try:
-                                frame_data = self.frame_queue.get_nowait()
-                                
-                                fr_resized = frame_data['frame_resized']
-                                frame_bytes = fr_resized.tobytes()
-                                shape = fr_resized.shape
-                                dtype = fr_resized.dtype
-                                
-                                batch_inputs = [(self.camera_id, frame_bytes, shape, dtype, self.roi, self.roi_polygon)]
-                                
-                                inf_imgsz = 320 if self.global_settings.get('low_end_mode', True) else 640
-                                
-                                future = inference_executor.submit(
-                                    worker_batch_inference,
-                                    batch_inputs,
-                                    inf_imgsz,
-                                    self.confidence_threshold
-                                )
-                                
-                                future.add_done_callback(
-                                    lambda fut, cam_proc=self, orig_frame=frame_data['frame_original']: on_inference_done(fut, cam_proc, orig_frame)
-                                )
-                            except queue.Empty:
-                                inference_semaphore.release()
-                            except Exception as ex:
-                                print(f"❌ Error submitting task: {ex}")
-                                inference_semaphore.release()
+                        try:
+                            frame_data = self.frame_queue.get_nowait()
+                            global_frame_queue.put_nowait(frame_data)
+                        except queue.Empty:
+                            pass
+                        except queue.Full:
+                            # Drop if global queue is backed up
+                            pass
                 else:
                     if logging.getLogger().isEnabledFor(logging.DEBUG):
                         logging.debug(f"[{self.name}] Skipping corrupted frame (H.264 decode error)")
                 
-                time.sleep(0.05)  # Small sleep to prevent busy-waiting
+                time.sleep(0.01)  # Adaptive pacing sleep instead of fixed slow wait
 
             except Exception as e:
                 if self.headless_mode:
@@ -2216,6 +2325,141 @@ def signal_handler(signum, frame):
     logging.info("Shutdown signal received. Stopping ANPR system...")
     stop_processing = True
 
+def rebuild_pool(safe_mode=False):
+    """Nuclear option: Recreates the entire process pool cleanly"""
+    global inference_executor, spawn_context, worker_id_counter
+    print("🔄 [SUPERVISOR] Rebuilding broken ProcessPoolExecutor...")
+    if inference_executor:
+        try:
+            inference_executor.shutdown(wait=False, cancel_futures=True)
+        except:
+            pass
+    
+    yolo_path = os.path.join(os.path.dirname(__file__), "yolov8_best_ANPR_Vamsi.pt")
+    lprnet_path = os.path.join(os.path.dirname(__file__), "newmodel", "best_lprnet.pth")
+    
+    with worker_id_counter.get_lock():
+        worker_id_counter.value = 0
+        
+    import concurrent.futures
+    import psutil
+    
+    num_cores = psutil.cpu_count(logical=False)
+    if num_cores is None: 
+        num_cores = psutil.cpu_count(logical=True)
+    
+    # Reserve 1 core for the main thread and I/O
+    max_workers = 1 if safe_mode else max(1, (num_cores or 2) - 1)
+    
+    print(f"🔄 [SUPERVISOR] Rebuilding ProcessPoolExecutor with {max_workers} dynamic workers...")
+    inference_executor = concurrent.futures.ProcessPoolExecutor(
+        max_workers=max_workers,
+        initializer=init_worker,
+        initargs=(yolo_path, lprnet_path, worker_id_counter, max_workers),
+        mp_context=spawn_context
+    )
+    print("✅ [SUPERVISOR] Pool rebuilt successfully.")
+
+def inference_supervisor_loop():
+    """Monitors pool health, handles timeouts, and dispatches true batches"""
+    global inference_executor, active_futures
+    
+    rebuild_count = 0
+    safe_mode = False
+    
+    while not stop_processing:
+        # 1. Hang Protection Check
+        now = time.time()
+        hung = False
+        with pool_lock:
+            for fut, meta in list(active_futures.items()):
+                if not fut.done() and (now - meta['start_time'] > INFERENCE_TIMEOUT):
+                    print("💀 [SUPERVISOR] Worker HANG detected! Timeout exceeded.")
+                    hung = True
+                    for shm in meta['shms']:
+                        cleanup_shared_memory(shm)
+                    active_futures.pop(fut, None)
+                    fut.cancel()
+
+        if hung:
+            rebuild_count += 1
+            if rebuild_count > 3:
+                print("🚨 [SUPERVISOR] SAFE MODE ACTIVATED: Scaling down workers due to instability.")
+                safe_mode = True
+                rebuild_count = 0
+                time.sleep(5)
+                
+            backoff_sleep = min(10, 2 ** rebuild_count)
+            time.sleep(backoff_sleep)
+            with pool_lock:
+                rebuild_pool(safe_mode=safe_mode)
+                continue
+
+        # 2. Collect a True Batch
+        batch = []
+        try:
+            # Wait for at least one frame
+            batch.append(global_frame_queue.get(timeout=0.1))
+            # Drain up to BATCH_SIZE
+            while len(batch) < BATCH_SIZE:
+                batch.append(global_frame_queue.get_nowait())
+        except queue.Empty:
+            pass
+
+        if not batch:
+            continue
+
+        batch_inputs = []
+        shm_names = []
+        orig_frames = []
+        cam_procs = []
+
+        import cv2
+        for data in batch:
+            fr_resized = data['frame_resized']
+            shm_name = None
+            try:
+                shm_name = get_shared_memory(fr_resized.shape, fr_resized.dtype, fr_resized)
+                shm_names.append(shm_name)
+            except Exception:
+                pass
+                
+            # Fix 4: Fallback bytes transmission
+            frame_fallback = cv2.imencode('.jpg', fr_resized, [cv2.IMWRITE_JPEG_QUALITY, 85])[1].tobytes()
+            batch_inputs.append((data['camera_id'], shm_name, fr_resized.shape, fr_resized.dtype, data['camera_processor'].roi, data['camera_processor'].roi_polygon, frame_fallback))
+            orig_frames.append(data['frame_original'])
+            cam_procs.append(data['camera_processor'])
+
+        # 3. Submit and Monitor
+        with pool_lock:
+            try:
+                # Use a representative inference_imgsz based on the first item or global setting
+                inf_imgsz = 320 if cam_procs[0].global_settings.get('low_end_mode', True) else 640
+                conf_thresh = cam_procs[0].confidence_threshold
+                future = inference_executor.submit(worker_batch_inference, batch_inputs, inf_imgsz, conf_thresh)
+                active_futures[future] = {'start_time': time.time(), 'shms': shm_names}
+                
+                def on_done(fut, s_names=shm_names, c_procs=cam_procs, o_frames=orig_frames):
+                    with pool_lock:
+                        active_futures.pop(fut, None)
+                    for shm in s_names:
+                        cleanup_shared_memory(shm)
+                    
+                    try:
+                        results = fut.result()
+                        for i, (cam_id, dets) in enumerate(results):
+                            c_procs[i].handle_inference_results(o_frames[i], dets)
+                    except concurrent.futures.process.BrokenProcessPool:
+                        print("💥 [SUPERVISOR] BrokenProcessPool exception caught in future!")
+                    except Exception as e:
+                        print(f"❌ [SUPERVISOR] Error in inference future: {e}")
+
+                future.add_done_callback(on_done)
+            except Exception as e:
+                print(f"❌ [SUPERVISOR] Error submitting task: {e}")
+                for shm in shm_names:
+                    cleanup_shared_memory(shm)
+
 
 def main():
     global stop_processing, plate_logger, cameras_dict, PROCESS_EVERY_NTH_FRAME
@@ -2284,22 +2528,20 @@ def main():
         print("⚠️ Real-time features will be disabled")
         websocket_client = None
 
-    # Initialize multiprocessing Semaphore and ProcessPoolExecutor (Section 1.1 / 1.2)
+    # Initialize multiprocessing Pool and Supervisor Thread
     import threading
     import multiprocessing
-    inference_semaphore = threading.Semaphore(2)
+    global spawn_context, worker_id_counter
     
-    yolo_path = os.path.join(os.path.dirname(__file__), "yolov8_best_ANPR_Vamsi.pt")
-    lprnet_path = os.path.join(os.path.dirname(__file__), "newmodel", "best_lprnet.pth")
-    
-    print("🚀 Initializing ProcessPoolExecutor with 2 worker processes (spawn context)...")
+    print("🚀 Initializing ProcessPoolExecutor with dynamic workers (spawn context)...")
     spawn_context = multiprocessing.get_context("spawn")
-    inference_executor = concurrent.futures.ProcessPoolExecutor(
-        max_workers=2,
-        initializer=init_worker,
-        initargs=(yolo_path, lprnet_path),
-        mp_context=spawn_context
-    )
+    worker_id_counter = spawn_context.Value('i', 0)
+    
+    rebuild_pool()
+    
+    supervisor_thread = threading.Thread(target=inference_supervisor_loop, daemon=True)
+    supervisor_thread.start()
+    print("🛡️  Inference Supervisor started.")
 
     # Create camera processors (dict-based)
     cameras_list = []
@@ -2433,7 +2675,6 @@ def main():
 
         print(f"\n🎯 Total plates detected across all cameras: {total_plates_all}")
         print("✅ ANPR system stopped cleanly")
-
 
 if __name__ == "__main__":
     main()
