@@ -118,33 +118,219 @@ import signal
 import torch
 from websocket_client import initialize_websocket_client, get_websocket_client
 
-torch.set_num_threads(2)        # Prevent PyTorch from using all cores
-torch.set_num_interop_threads(1)
-cv2.setNumThreads(2)            # Prevent OpenCV from using all cores
+try:
+    torch.set_num_threads(2)        # Prevent PyTorch from using all cores
+except RuntimeError:
+    pass
+try:
+    torch.set_num_interop_threads(1)
+except RuntimeError:
+    pass
+try:
+    cv2.setNumThreads(2)            # Prevent OpenCV from using all cores
+except Exception:
+    pass
 model = None
 lprnet_model = None
 device = 'cpu'
 
-def load_models():
-    global model, lprnet_model
-    # Load YOLO model with GPU support
-    model_path = os.path.join(os.path.dirname(__file__), "yolov8_best_ANPR_Vamsi.pt")
-    model = YOLO(model_path)
-    # Force CPU to avoid CUDA kernel compatibility issues
-    model.to('cpu')
-    print("✅ YOLO model loaded on CPU (GPU compatibility issue detected)")
+# Global inference structures (multiprocessing model)
+inference_executor = None
+inference_semaphore = None
 
-    # ============================================================================
-    #  PaddleOCR initialization block
-    #  LPRNet initialization block
-    # ============================================================================
-    # Initialize LPRNet
-    print("🔄 Initializing LPRNet model...")
-    lprnet_model = LPRNet(class_num=37, dropout_rate=0)
-    lprnet_model.load_state_dict(torch.load('newmodel/best_lprnet.pth', map_location=device, weights_only=False))
-    lprnet_model.to(device)
-    lprnet_model.eval()
-    print(f"✅ LPRNet initialized on {device}")
+# Worker subprocess globals
+worker_yolo = None
+worker_lprnet = None
+worker_device = 'cpu'
+
+def init_worker(yolo_path, lprnet_path):
+    """
+    Initializer function for the worker processes in the ProcessPoolExecutor.
+    Loads the YOLO and LPRNet models exactly once per worker process.
+    """
+    global worker_yolo, worker_lprnet, worker_device
+    import sys
+    import os
+    project_dir = os.path.dirname(os.path.abspath(__file__))
+    if project_dir not in sys.path:
+        sys.path.insert(0, project_dir)
+        
+    import torch
+    import cv2
+    from ultralytics import YOLO
+    from LPRNet import LPRNet
+    
+    # Configure CPU thread counts for the subprocesses to prevent core thrashing
+    try:
+        torch.set_num_threads(2)
+    except RuntimeError:
+        pass
+    try:
+        torch.set_num_interop_threads(1)
+    except RuntimeError:
+        pass
+    try:
+        cv2.setNumThreads(2)
+    except Exception:
+        pass
+    
+    worker_device = 'cpu'
+    
+    # Check if CPU supports AVX2 to enable FP16 half precision acceleration
+    avx2_supported = False
+    try:
+        with open('/proc/cpuinfo', 'r') as f:
+            for line in f:
+                if 'flags' in line and ('avx2' in line or 'avx' in line):
+                    avx2_supported = True
+                    break
+    except:
+        pass
+        
+    print(f"🔄 Loading YOLOv8 model in worker process {os.getpid()}...")
+    worker_yolo = YOLO(yolo_path)
+    worker_yolo.to(worker_device)
+    
+    # PyTorch CPU FP16 fallback (disabled on CPU as PyTorch CPU does not support FP16/Half Conv2d operations)
+    if worker_device == 'cuda' and avx2_supported:
+        try:
+            worker_yolo.model.half()
+            print("🚀 CUDA detected: YOLOv8 model half-precision (FP16) enabled")
+        except Exception as e:
+            print(f"⚠️ Failed to enable half precision: {e}")
+            
+    print(f"✅ YOLOv8 loaded in worker process {os.getpid()}")
+    
+    print(f"🔄 Loading LPRNet model in worker process {os.getpid()}...")
+    worker_lprnet = LPRNet(class_num=37, dropout_rate=0)
+    worker_lprnet.load_state_dict(torch.load(lprnet_path, map_location=worker_device, weights_only=False))
+    worker_lprnet.to(worker_device)
+    worker_lprnet.eval()
+    
+    # FP16 is disabled on CPU as PyTorch CPU does not support FP16/Half Conv2d operations
+    if worker_device == 'cuda' and avx2_supported:
+        try:
+            worker_lprnet.half()
+            print("🚀 CUDA detected: LPRNet half-precision (FP16) enabled")
+        except Exception as e:
+            print(f"⚠️ Failed to enable half precision for LPRNet: {e}")
+            
+    print(f"✅ LPRNet loaded in worker process {os.getpid()}")
+
+def worker_batch_inference(batch_inputs, inference_imgsz, confidence_threshold):
+    """
+    Executes inference for a batch of frames in the worker process.
+    batch_inputs: list of tuples: (camera_id, frame_bytes, shape, dtype, roi, roi_polygon)
+    """
+    global worker_yolo, worker_lprnet, worker_device
+    import numpy as np
+    import cv2
+    import torch
+    from LPRNet import predict_plate
+    
+    results = []
+    
+    for camera_id, frame_bytes, shape, dtype, roi, roi_polygon in batch_inputs:
+        try:
+            # Reconstruct frame from bytes
+            frame = np.frombuffer(frame_bytes, dtype=dtype).reshape(shape)
+            
+            # ROI Extraction in the worker
+            h_full, w_full, _ = frame.shape
+            frame_for_detection = frame
+            roi_offset_x, roi_offset_y = 0, 0
+            
+            try:
+                if roi_polygon and len(roi_polygon) >= 3:
+                    poly_np = np.array(roi_polygon, dtype=np.int32)
+                    x, y, w, h = cv2.boundingRect(poly_np)
+                    
+                    x = max(0, min(x, w_full - 1))
+                    y = max(0, min(y, h_full - 1))
+                    w = max(1, min(w, w_full - x))
+                    h = max(1, min(h, h_full - y))
+                    
+                    crop = frame[y:y + h, x:x + w]
+                    mask = np.zeros((h, w), dtype=np.uint8)
+                    shifted_poly = poly_np - np.array([x, y], dtype=np.int32)
+                    cv2.fillPoly(mask, [shifted_poly], 255)
+                    
+                    frame_for_detection = cv2.bitwise_and(crop, crop, mask=mask)
+                    roi_offset_x, roi_offset_y = x, y
+                    
+                elif roi:
+                    # roi is dict or list
+                    if isinstance(roi, dict):
+                        x1_roi = roi.get('x1', 0)
+                        y1_roi = roi.get('y1', 0)
+                        x2_roi = roi.get('x2', w_full)
+                        y2_roi = roi.get('y2', h_full)
+                    else:
+                        x1_roi, y1_roi, x2_roi, y2_roi = roi
+                        
+                    x1_roi = max(0, min(x1_roi, w_full - 1))
+                    y1_roi = max(0, min(y1_roi, h_full - 1))
+                    x2_roi = max(0, min(x2_roi, w_full))
+                    y2_roi = max(0, min(y2_roi, h_full))
+                    
+                    if x2_roi > x1_roi and y2_roi > y1_roi:
+                        frame_for_detection = frame[y1_roi:y2_roi, x1_roi:x2_roi]
+                        roi_offset_x, roi_offset_y = x1_roi, y1_roi
+            except Exception as e:
+                print(f"⚠️ Error applying ROI in worker: {e}")
+                
+            # Run YOLOv8 detection
+            yolo_results = worker_yolo.predict(frame_for_detection, imgsz=inference_imgsz, verbose=False)
+            
+            detections = []
+            if yolo_results and len(yolo_results) > 0 and yolo_results[0].boxes is not None:
+                for result in yolo_results[0].boxes:
+                    x1, y1, x2, y2 = map(int, result.xyxy[0])
+                    conf = float(result.conf[0]) if result.conf is not None else 0.0
+                    
+                    if conf < confidence_threshold:
+                        continue
+                        
+                    h_det, w_det, _ = frame_for_detection.shape
+                    x1, y1, x2, y2 = max(0, x1), max(0, y1), min(w_det, x2), min(h_det, y2)
+                    
+                    if x2 <= x1 or y2 <= y1:
+                        continue
+                        
+                    cropped_plate = frame_for_detection[y1:y2, x1:x2]
+                    if cropped_plate.size == 0 or cropped_plate.shape[0] < 10 or cropped_plate.shape[1] < 10:
+                        continue
+                        
+                    if not cropped_plate.flags['C_CONTIGUOUS']:
+                        cropped_plate = np.ascontiguousarray(cropped_plate)
+                    if cropped_plate.dtype != np.uint8:
+                        cropped_plate = cropped_plate.astype(np.uint8)
+                        
+                    # LPRNet OCR Prediction
+                    try:
+                        license_plate_text = predict_plate(worker_lprnet, cropped_plate, worker_device)
+                    except Exception as ocr_error:
+                        print(f"⚠️ OCR Error in worker: {ocr_error}")
+                        continue
+                        
+                    detections.append({
+                        'plate_text': license_plate_text,
+                        'bbox': (x1, y1, x2, y2),
+                        'roi_offset': (roi_offset_x, roi_offset_y),
+                        'confidence': conf
+                    })
+                    
+            results.append((camera_id, detections))
+            
+        except Exception as e:
+            print(f"❌ Error in worker_batch_inference for camera {camera_id}: {e}")
+            results.append((camera_id, []))
+            
+    return results
+
+def load_models():
+    """No-op as models are lazy-loaded within worker processes"""
+    pass
 
 # Define confusion mapping for common OCR errors
 # digits that look like letters (and vice versa)
@@ -174,16 +360,7 @@ INDIAN_PLATE_REGEX = re.compile(
     r')$'
 )
 
-# ============================================================================
-# REFACTORED THREADING MODEL (N+2 threads):
-#  - N per-camera fetch threads (simple frame capture)
-#  - 1 global frame processor thread (YOLO + OCR)
-#  - 1 optional global display thread (grid visualization)
-# ============================================================================
-
-# Removed global_frame_queue in favor of per-camera queues
-
-# Global ThreadPool for API calls to prevent thread bloat
+# Global ThreadPool for API calls and async writes to prevent thread bloat
 api_thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=5)
 
 # Global processing threads
@@ -204,19 +381,32 @@ websocket_client = None
 # Dictionary-based cameras for O(1) lookup and easy hot reload
 cameras_dict = {}  # {camera_id: CameraProcessor}
 
-# ============================================================================
 # per-camera throttle at module level
-# ============================================================================
 _last_processed_time = {}
 MIN_PROCESS_INTERVAL = 0.08
 
+def on_inference_done(future, camera_processor, original_frame):
+    """
+    Callback executed when a worker process completes inference.
+    Releases the global inference semaphore and routes results to the camera processor.
+    """
+    if inference_semaphore:
+        inference_semaphore.release()
+    
+    try:
+        results = future.result()
+        for cam_id, detections in results:
+            if cam_id == camera_processor.camera_id:
+                camera_processor.handle_inference_results(original_frame, detections)
+    except Exception as e:
+        print(f"❌ Error in on_inference_done callback: {e}")
 
 class CameraProcessor:
     """
-    SIMPLIFIED for N+2 threading model:
-    - Only handles frame FETCHING (RTSP capture)
-    - Frame PROCESSING moved to global processor thread
-    - ROI selection, image saving remain here
+    SIMPLIFIED multiprocessing-driven CameraProcessor:
+    - Fetches frames from RTSP streams and submits to ProcessPoolExecutor
+    - Uses locks on current_processed_frame to prevent tearing/memory corruption
+    - Manages Region Of Interest (ROI) and async image writes
     """
     
     def __init__(self, camera_config, global_settings, headless_mode=False, headless_settings=None):
@@ -232,16 +422,17 @@ class CameraProcessor:
 
         self.headless_mode = headless_mode
         self.headless_settings = headless_settings or {}
+        self.global_settings = global_settings
 
         self.fetch_thread = None  # Thread for fetching frames from RTSP
         self.cap = None
-        self.current_processed_frame = None
+        self._current_processed_frame = None
+        self._frame_lock = Lock()
         self.frame_count = 0
         self.start_time = time.time()
         
-        # Optimization 2: Per-camera queue (size 1)
-        self.frame_queue = queue.Queue(maxsize=1)
-        # Optimization 1: Throttle frame ingestion
+        # Bounded frame queue (Section 2.2)
+        self.frame_queue = queue.Queue(maxsize=2)
         self.last_put_time = 0.0
 
         # Optional Region Of Interest (ROI) for this camera
@@ -308,6 +499,16 @@ class CameraProcessor:
         # ============================================================================
         self._clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(4, 4))
         self._sharpen_kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
+
+    @property
+    def current_processed_frame(self):
+        with self._frame_lock:
+            return self._current_processed_frame
+
+    @current_processed_frame.setter
+    def current_processed_frame(self, frame):
+        with self._frame_lock:
+            self._current_processed_frame = frame
 
     def is_valid_indian_plate(self, plate_text):
         """Validate if detected plate matches Indian number plate format"""
@@ -654,254 +855,155 @@ class CameraProcessor:
             frame = np.ascontiguousarray(frame)
         return True
 
-    def process_frame(self, frame, frame_number=None):
+    def handle_inference_results(self, original_frame, detections):
         """
-        INDEPENDENT PROCESSING LOGIC (moved from fetch thread)
-        Used by global processor thread to process frames from queue
+        Handle YOLO/LPRNet inference results returned from worker processes:
+        - Draw bounding boxes and text.
+        - Check Indian plate format.
+        - Verify plate with PlateLogger.
+        - Save detection images and verified plate image.
+        - Send to API / admin panel.
         """
         try:
             start_time = time.time()
-
-            if not self._validate_frame(frame, "input_frame"):
-                if self.headless_mode:
-                    logging.warning(f"[{self.name}] Invalid frame received, skipping")
-                else:
-                    print(f"⚠️ [{self.name}] Invalid frame received, skipping")
-                return frame, []
-
-            original_frame = frame.copy()
-            frame_for_detection = frame
-            roi_offset_x, roi_offset_y = 0, 0
-
-            try:
-                h_full, w_full, _ = frame.shape
-
-                if self.roi_polygon and len(self.roi_polygon) >= 3:
-                    poly_np = np.array(self.roi_polygon, dtype=np.int32)
-                    x, y, w, h = cv2.boundingRect(poly_np)
-
-                    x = max(0, min(x, w_full - 1))
-                    y = max(0, min(y, h_full - 1))
-                    w = max(1, min(w, w_full - x))
-                    h = max(1, min(h, h_full - y))
-
-                    crop = frame[y:y + h, x:x + w]
-                    mask = np.zeros((h, w), dtype=np.uint8)
-                    shifted_poly = poly_np - np.array([x, y], dtype=np.int32)
-                    cv2.fillPoly(mask, [shifted_poly], 255)
-
-                    frame_for_detection = cv2.bitwise_and(crop, crop, mask=mask)
-                    roi_offset_x, roi_offset_y = x, y
-
-                elif self.roi:
-                    x1_roi, y1_roi, x2_roi, y2_roi = self.roi
-
-                    x1_roi = max(0, min(x1_roi, w_full - 1))
-                    y1_roi = max(0, min(y1_roi, h_full - 1))
-                    x2_roi = max(0, min(x2_roi, w_full))
-                    y2_roi = max(0, min(y2_roi, h_full))
-
-                    if x2_roi > x1_roi and y2_roi > y1_roi:
-                        frame_for_detection = frame[y1_roi:y2_roi, x1_roi:x2_roi]
-                        roi_offset_x, roi_offset_y = x1_roi, y1_roi
-                    else:
-                        frame_for_detection = frame
-                else:
-                    frame_for_detection = frame
-            except Exception as e:
-                print(f"⚠️ [{self.name}] Error applying ROI, falling back to full frame: {e}")
-                frame_for_detection = frame
-                roi_offset_x, roi_offset_y = 0, 0
-
-            if not self._validate_frame(frame_for_detection, "detection_frame"):
-                if self.headless_mode:
-                    logging.warning(f"[{self.name}] Invalid ROI frame, skipping detection")
-                else:
-                    print(f"⚠️ [{self.name}] Invalid ROI frame, skipping detection")
-                return original_frame, []
-
-            # YOLO detection (synchronized globally via processor thread)
-            try:
-                results = model.predict(frame_for_detection, imgsz=640, verbose=False)
-            except Exception as e:
-                if self.headless_mode:
-                    logging.error(f"[{self.name}] YOLO prediction error: {e}")
-                else:
-                    print(f"❌ [{self.name}] YOLO prediction error: {e}")
-                return original_frame, []
-
             processed_frame = original_frame.copy()
             detected_texts = []
+            
+            for det in detections:
+                license_plate_text = det['plate_text']
+                x1, y1, x2, y2 = det['bbox']
+                roi_offset_x, roi_offset_y = det['roi_offset']
+                confidence = det['confidence']
+                
+                # Check valid Indian plate format (Section 3.1)
+                if not self.is_valid_indian_plate(license_plate_text):
+                    if logging.getLogger().isEnabledFor(logging.DEBUG):
+                        logging.debug(f"[{self.name}] Invalid plate format (not Indian), skipping: {license_plate_text}")
+                    continue
+                
+                if license_plate_text and license_plate_text != "No license plate detected":
+                    processing_time = (time.time() - start_time) * 1000
+                    current_time = time.time()
+                    
+                    with self.plate_lock:
+                        if current_time - self.last_cleanup_time > self.cleanup_interval:
+                            expired_plates = [
+                                plate for plate, timestamp in self.detected_plates.items()
+                                if current_time - timestamp > self.dedup_window
+                            ]
+                            for plate in expired_plates:
+                                del self.detected_plates[plate]
+                            self.last_cleanup_time = current_time
 
-            if results and len(results) > 0 and results[0].boxes is not None:
-                for result in results[0].boxes:
-                    x1, y1, x2, y2 = map(int, result.xyxy[0])
-                    confidence = float(result.conf[0]) if result.conf is not None else 0.0
+                        self.detected_plates[license_plate_text] = current_time
+                        detected_texts.append(license_plate_text)
+                        
+                    if plate_logger:
+                        verification = plate_logger.verify_plate(license_plate_text)
+                        verification_status = verification['verification_status']
 
-                    h, w, _ = frame_for_detection.shape
-                    x1, y1, x2, y2 = max(0, x1), max(0, y1), min(w, x2), min(h, y2)
-
-                    if x2 <= x1 or y2 <= y1:
-                        continue
-
-                    cropped_plate = frame_for_detection[y1:y2, x1:x2]
-
-                    if cropped_plate.size == 0 or cropped_plate.shape[0] < 10 or cropped_plate.shape[1] < 10:
-                        continue
-
-                    if not self._validate_frame(cropped_plate, "cropped_plate"):
-                        if self.headless_mode:
-                            logging.warning(f"[{self.name}] Invalid cropped plate, skipping OCR")
-                        continue
-
-                    if not cropped_plate.flags['C_CONTIGUOUS']:
-                        cropped_plate = np.ascontiguousarray(cropped_plate)
-                    if cropped_plate.dtype != np.uint8:
-                        cropped_plate = cropped_plate.astype(np.uint8)
-
-                    ocr_result = None
-                    try:
-                        # ============================================================================
-                        # the OCR call inside process_frame method
-                        # ============================================================================
-                        license_plate_text = predict_plate(lprnet_model, cropped_plate, device)
-                        ocr_result = self.convert_ocr_format([[(license_plate_text, 1.0)]])
-                    except Exception as ocr_error:
-                        error_msg = str(ocr_error)
-                        if "Tensor holds no memory" in error_msg or "PreconditionNotMetError" in error_msg:
-                            if self.headless_mode:
-                                logging.warning(f"[{self.name}] PaddleOCR tensor error (likely corrupted frame), skipping: {error_msg[:100]}")
-                            else:
-                                print(f"⚠️ [{self.name}] PaddleOCR tensor error (likely corrupted frame), skipping: {error_msg[:100]}")
+                        if verification['is_allowed']:
+                            box_color = (0, 255, 0)
+                            text_color = (0, 255, 0)
                         else:
-                            if self.headless_mode:
-                                logging.error(f"[{self.name}] OCR error: {error_msg[:200]}")
-                            else:
-                                print(f"❌ [{self.name}] OCR error: {error_msg[:200]}")
-                        continue
+                            box_color = (0, 0, 255)
+                            text_color = (0, 0, 255)
 
-                    license_plate_text = self.extract_license_plate(ocr_result)
-                    
+                        global_x1 = x1 + roi_offset_x
+                        global_y1 = y1 + roi_offset_y
+                        global_x2 = x2 + roi_offset_x
+                        global_y2 = y2 + roi_offset_y
 
-                    
-                    if not self.is_valid_indian_plate(license_plate_text):
-                        if self.headless_mode:
-                            logging.debug(f"[{self.name}] Invalid plate format (not Indian), skipping: {license_plate_text}")
-                        else:
-                            print(f"🚫 [{self.name}] Invalid plate format (not Indian), skipping: {license_plate_text}")
-                        continue
-                    
-                    if license_plate_text and license_plate_text != "No license plate detected":
-                        processing_time = (time.time() - start_time) * 1000
+                        annotated_frame = processed_frame.copy()
+                        cv2.rectangle(annotated_frame, (global_x1, global_y1), (global_x2, global_y2), box_color, 2)
+                        cv2.putText(annotated_frame, license_plate_text, (global_x1 - 13, global_y1 - 9),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 3, cv2.LINE_AA)
+                        cv2.putText(annotated_frame, license_plate_text, (global_x1 - 14, global_y1 - 10),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, text_color, 2, cv2.LINE_AA)
+                        status_text = f"{verification['verification_status']}"
+                        cv2.putText(annotated_frame, status_text, (global_x1, global_y2 + 20),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, text_color, 2, cv2.LINE_AA)
 
-                        current_time = time.time()
-                        with self.plate_lock:
-                            if current_time - self.last_cleanup_time > self.cleanup_interval:
-                                expired_plates = [
-                                    plate for plate, timestamp in self.detected_plates.items()
-                                    if current_time - timestamp > self.dedup_window
-                                ]
-                                for plate in expired_plates:
-                                    del self.detected_plates[plate]
-                                self.last_cleanup_time = current_time
+                        processed_frame = annotated_frame
 
-                            self.detected_plates[license_plate_text] = current_time
-                            detected_texts.append(license_plate_text)
+                        # Async Image Saving (Section 7.2)
+                        image_urls = self.save_detection_images(
+                            full_frame_annotated=annotated_frame,
+                            plate_text=license_plate_text,
+                            verification_status=verification_status,
+                            bbox_x1=global_x1,
+                            bbox_y1=global_y1,
+                            bbox_x2=global_x2,
+                            bbox_y2=global_y2
+                        )
 
-                        if plate_logger:
-                            verification = plate_logger.verify_plate(license_plate_text)
-                            verification_status = verification['verification_status']
+                        # Check cooldown for verified plates (1 second)
+                        should_log = True
+                        if verification_status == "VERIFIED" and self.is_verified_plate_on_cooldown(license_plate_text):
+                            should_log = False
+                            if not self.headless_mode:
+                                print(f"⏳ [{self.name}] Verified plate {license_plate_text} on 1s cooldown, skipping log")
 
-                            if verification['is_allowed']:
-                                box_color = (0, 255, 0)
-                                text_color = (0, 255, 0)
-                            else:
-                                box_color = (0, 0, 255)
-                                text_color = (0, 0, 255)
-
-                            global_x1 = x1 + roi_offset_x
-                            global_y1 = y1 + roi_offset_y
-                            global_x2 = x2 + roi_offset_x
-                            global_y2 = y2 + roi_offset_y
-
-                            annotated_frame = processed_frame.copy()
-                            cv2.rectangle(annotated_frame, (global_x1, global_y1), (global_x2, global_y2), box_color, 2)
-                            cv2.putText(annotated_frame, license_plate_text, (global_x1 - 13, global_y1 - 9),
-                                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 3, cv2.LINE_AA)
-                            cv2.putText(annotated_frame, license_plate_text, (global_x1 - 14, global_y1 - 10),
-                                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, text_color, 2, cv2.LINE_AA)
-                            status_text = f"{verification['verification_status']}"
-                            cv2.putText(annotated_frame, status_text, (global_x1, global_y2 + 20),
-                                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, text_color, 2, cv2.LINE_AA)
-
-                            processed_frame = annotated_frame
-
-                            image_urls = self.save_detection_images(
-                                full_frame_annotated=annotated_frame,
-                                plate_text=license_plate_text,
-                                verification_status=verification_status,
-                                bbox_x1=global_x1,
-                                bbox_y1=global_y1,
-                                bbox_x2=global_x2,
-                                bbox_y2=global_y2
+                        if should_log:
+                            plate_logger.log_detection(
+                                plate=license_plate_text,
+                                detection_confidence=confidence,
+                                processing_time_ms=processing_time,
+                                camera_source=f"{self.name} ({self.location})",
+                                image_full_annotated=image_urls.get('image_full_annotated') if image_urls else None,
+                                bbox_x1=image_urls.get('bbox_x1') if image_urls else None,
+                                bbox_y1=image_urls.get('bbox_y1') if image_urls else None,
+                                bbox_x2=image_urls.get('bbox_x2') if image_urls else None,
+                                bbox_y2=image_urls.get('bbox_y2') if image_urls else None
                             )
-
-                            # Check cooldown for verified plates (1 second)
-                            should_log = True
-                            if verification_status == "VERIFIED" and self.is_verified_plate_on_cooldown(license_plate_text):
-                                should_log = False
-                                if not self.headless_mode:
-                                    print(f"⏳ [{self.name}] Verified plate {license_plate_text} on 1s cooldown, skipping log")
-
-                            if should_log:
-                                plate_logger.log_detection(
-                                    plate=license_plate_text,
-                                    detection_confidence=confidence,
-                                    processing_time_ms=processing_time,
-                                    camera_source=f"{self.name} ({self.location})",
-                                    image_full_annotated=image_urls.get('image_full_annotated') if image_urls else None,
-                                    bbox_x1=image_urls.get('bbox_x1') if image_urls else None,
-                                    bbox_y1=image_urls.get('bbox_y1') if image_urls else None,
-                                    bbox_x2=image_urls.get('bbox_x2') if image_urls else None,
-                                    bbox_y2=image_urls.get('bbox_y2') if image_urls else None
-                                )
-
-                                # Update cooldown for verified plates after logging
-                                if verification_status == "VERIFIED":
-                                    self.update_verified_plate_cooldown(license_plate_text)
 
                             if verification_status == "VERIFIED":
-                                self.save_verified_plate_image(processed_frame, license_plate_text)
+                                self.update_verified_plate_cooldown(license_plate_text)
 
-                            self.send_detection_to_admin_panel(
-                                plate=license_plate_text,
-                                confidence=confidence,
-                                processing_time=processing_time,
-                                verification_status=verification_status,
-                                image_urls=image_urls
-                            )
+                        if verification_status == "VERIFIED":
+                            self.save_verified_plate_image(processed_frame, license_plate_text)
 
-                            if verification_status == "VERIFIED" and self.api_enabled:
-                                api_thread_pool.submit(self.trigger_api_call, license_plate_text, verification_status)
-                            else:
-                                if not self.api_enabled:
+                        self.send_detection_to_admin_panel(
+                            plate=license_plate_text,
+                            confidence=confidence,
+                            processing_time=processing_time,
+                            verification_status=verification_status,
+                            image_urls=image_urls
+                        )
+
+                        if verification_status == "VERIFIED" and self.api_enabled:
+                            api_thread_pool.submit(self.trigger_api_call, license_plate_text, verification_status)
+                        else:
+                            if not self.api_enabled:
+                                if not self.headless_mode:
                                     print(f"🚫 [{self.name}] API disabled for this camera - plate: {license_plate_text}")
-                                else:
+                            else:
+                                if not self.headless_mode:
                                     print(f"🚫 [{self.name}] API call skipped for plate: {license_plate_text} (Status: {verification_status}) - Not verified")
-
-            return processed_frame, detected_texts
-
+                                    
+            self.current_processed_frame = processed_frame
+            if detected_texts:
+                if self.headless_mode:
+                    logging.info(f"[{self.name}] Detected plates: {detected_texts}")
+                else:
+                    print(f"📹 [{self.name}] Detected plates: {detected_texts}")
         except Exception as e:
-            print(f"❌ [{self.name}] Error processing frame: {e}")
-            return frame, []
+            print(f"❌ [{self.name}] Error handling inference results: {e}")
 
     def frame_fetch_worker(self):
         """
-        SIMPLIFIED for N+2 model:
-        - Only FETCH frames from RTSP and queue them
-        - NO processing (processing done by global processor thread)
+        Multiprocessing fetch worker:
+        - Captures frames from RTSP.
+        - Resizes frames for low-end device CPU efficiency (Section 2.1).
+        - Dynamically controls frame interval based on CPU load (Section 2.3).
+        - Drops frame on queue full (Section 2.2).
+        - Executes low-overhead motion detection (Section 2.4) and skips inference.
+        - Submits to global ProcessPoolExecutor when semaphore is free (Section 1.2).
         """
-        global stop_processing
+        global stop_processing, inference_executor, inference_semaphore
+        
+        # Initialize last_gray_frame for motion detection
+        self.last_gray_frame = None
 
         while True:
             if stop_processing:
@@ -942,38 +1044,112 @@ class CameraProcessor:
                         if self._validate_frame(frame, "captured_frame"):
                             frame_copy = frame.copy()
                             
-                            # Optimization 1: Throttle frame ingestion (2 FPS = 0.5s per frame)
-                            current_time = time.time()
-                            if current_time - self.last_put_time > 0.5:
-                                self.last_put_time = current_time
+                            # Scale inference frame down to max 640px wide (Section 2.1)
+                            h_orig, w_orig = frame_copy.shape[:2]
+                            if w_orig > 640:
+                                scale_factor = 640.0 / w_orig
+                                frame_resized = cv2.resize(frame_copy, (640, int(h_orig * scale_factor)), interpolation=cv2.INTER_LINEAR)
+                            else:
+                                frame_resized = frame_copy.copy()
                                 
-                                # Optimization 2: Put frame on per-camera queue
+                            # Update thread-safe display property (Section 1.4)
+                            self.current_processed_frame = frame_copy
+                            
+                            # Cheap Motion Detection (Section 2.4)
+                            is_motion = True
+                            try:
+                                gray = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2GRAY)
+                                h_g, w_g = gray.shape[:2]
+                                if w_g > 320:
+                                    s_g = 320.0 / w_g
+                                    gray_small = cv2.resize(gray, (320, int(h_g * s_g)), interpolation=cv2.INTER_LINEAR)
+                                else:
+                                    gray_small = gray
+                                    
+                                if self.last_gray_frame is not None and self.last_gray_frame.shape == gray_small.shape:
+                                    diff = cv2.absdiff(self.last_gray_frame, gray_small)
+                                    mean_diff = np.mean(diff)
+                                    if mean_diff < 8.0:
+                                        is_motion = False
+                                self.last_gray_frame = gray_small
+                            except Exception as e:
+                                pass
+                                
+                            if not is_motion:
+                                # Clean up queue on no-motion
+                                try:
+                                    while not self.frame_queue.empty():
+                                        self.frame_queue.get_nowait()
+                                except:
+                                    pass
+                                time.sleep(0.05)
+                                continue
+                                
+                            # Dynamic FPS Throttling (Section 2.3)
+                            import psutil
+                            current_time = time.time()
+                            if not hasattr(self, '_last_cpu_check') or current_time - self._last_cpu_check > 5.0:
+                                self._last_cpu_check = current_time
+                                self._cpu_usage = psutil.cpu_percent(interval=None)
+                            
+                            cpu_usage = getattr(self, '_cpu_usage', 50.0)
+                            target_interval = 2.0 if cpu_usage >= 70.0 else 0.5
+                            
+                            if current_time - self.last_put_time > target_interval:
+                                self.last_put_time = current_time
+                                # Enforce strict queue size limits and drop on full (Section 2.2)
                                 try:
                                     self.frame_queue.put_nowait({
-                                        'frame': frame_copy,
+                                        'frame_resized': frame_resized,
+                                        'frame_original': frame_copy,
                                         'camera_id': self.camera_id,
                                         'camera_processor': self,
                                         'frame_number': self.frame_count
                                     })
                                 except queue.Full:
-                                    # Queue full, drop oldest frame
+                                    if logging.getLogger().isEnabledFor(logging.DEBUG):
+                                        logging.debug(f"[{self.name}] Frame queue full (maxsize=2), dropping incoming frame.")
+                                        
+                            # Dispatch task directly to central ProcessPoolExecutor (Section 1.2)
+                            if not self.frame_queue.empty():
+                                acquired = inference_semaphore.acquire(blocking=False)
+                                if acquired:
                                     try:
-                                        self.frame_queue.get_nowait()
-                                        self.frame_queue.put_nowait({
-                                            'frame': frame_copy,
-                                            'camera_id': self.camera_id,
-                                            'camera_processor': self,
-                                            'frame_number': self.frame_count
-                                        })
+                                        frame_data = self.frame_queue.get_nowait()
+                                        
+                                        fr_resized = frame_data['frame_resized']
+                                        frame_bytes = fr_resized.tobytes()
+                                        shape = fr_resized.shape
+                                        dtype = fr_resized.dtype
+                                        
+                                        batch_inputs = [(self.camera_id, frame_bytes, shape, dtype, self.roi, self.roi_polygon)]
+                                        
+                                        inf_imgsz = 320 if self.global_settings.get('low_end_mode', True) else 640
+                                        
+                                        future = inference_executor.submit(
+                                            worker_batch_inference,
+                                            batch_inputs,
+                                            inf_imgsz,
+                                            self.confidence_threshold
+                                        )
+                                        
+                                        future.add_done_callback(
+                                            lambda fut, cam_proc=self, orig_frame=frame_data['frame_original']: on_inference_done(fut, cam_proc, orig_frame)
+                                        )
                                     except queue.Empty:
-                                        pass
+                                        inference_semaphore.release()
+                                    except Exception as ex:
+                                        print(f"❌ Error submitting task: {ex}")
+                                        inference_semaphore.release()
 
                             # Save periodic ROI fallback snapshot for admin panel ROI editor fallback
                             try:
                                 current_time = time.time()
                                 if current_time - self.last_roi_snapshot_time >= self.roi_snapshot_interval:
                                     snapshot_path = os.path.join(self.roi_snapshot_dir, f"{self.camera_id}.jpg")
-                                    self.api_thread_pool.submit(cv2.imwrite, snapshot_path, frame_copy)
+                                    # Copy frame to protect from mutation before writing
+                                    snapshot_frame = frame_copy.copy()
+                                    self.api_thread_pool.submit(cv2.imwrite, snapshot_path, snapshot_frame)
                                     self.last_roi_snapshot_time = current_time
                             except Exception as e:
                                 if self.headless_mode:
@@ -981,7 +1157,7 @@ class CameraProcessor:
                                 else:
                                     print(f"⚠️ [{self.name}] Failed to save ROI snapshot: {e}")
                         else:
-                            if self.headless_mode:
+                            if logging.getLogger().isEnabledFor(logging.DEBUG):
                                 logging.debug(f"[{self.name}] Skipping corrupted frame (H.264 decode error)")
                     else:
                         if self.headless_mode:
@@ -1321,7 +1497,7 @@ class CameraProcessor:
             logging.error(f"[{self.name}] Error saving frame: {e}")
 
     def save_verified_plate_image(self, frame, plate_text):
-        """Save image for verified plates"""
+        """Save image for verified plates asynchronously"""
         try:
             verified_dir = "admin_panel/static/images/verified_plates"
             os.makedirs(verified_dir, exist_ok=True)
@@ -1330,21 +1506,23 @@ class CameraProcessor:
             filename = f"verified_{self.camera_id}_{timestamp}_{plate_text}.jpg"
             filepath = os.path.join(verified_dir, filename)
 
-            cv2.imwrite(filepath, frame)
+            # Copy frame to ensure memory isn't modified during async write
+            frame_copy = frame.copy()
+            self.api_thread_pool.submit(cv2.imwrite, filepath, frame_copy)
 
             if self.headless_mode:
-                logging.info(f"[{self.name}] Verified plate image saved: {filename}")
+                logging.info(f"[{self.name}] Async verified plate image save queued: {filename}")
             else:
-                print(f"📸 [{self.name}] Verified plate image saved: {filename}")
+                print(f"📸 [{self.name}] Async verified plate image save queued: {filename}")
 
         except Exception as e:
             if self.headless_mode:
-                logging.error(f"[{self.name}] Error saving verified plate image: {e}")
+                logging.error(f"[{self.name}] Error queueing verified plate image save: {e}")
             else:
-                print(f"❌ [{self.name}] Error saving verified plate image: {e}")
+                print(f"❌ [{self.name}] Error queueing verified plate image save: {e}")
 
     def save_detection_images(self, full_frame_annotated, plate_text, verification_status, bbox_x1, bbox_y1, bbox_x2, bbox_y2):
-        """Save detection image and return URLs and bbox"""
+        """Save detection image asynchronously and return URLs and bbox immediately"""
         urls = {}
         try:
             base_dir = "admin_panel/static/images/detections"
@@ -1357,15 +1535,23 @@ class CameraProcessor:
             status_tag = "VER" if verification_status == "VERIFIED" else "NOTVER"
 
             full_annotated_name = f"{self.camera_id}_{timestamp}_{safe_plate}_{status_tag}_ann.webp"
-
             full_annotated_path = os.path.join(full_annotated_dir, full_annotated_name)
 
             if isinstance(full_frame_annotated, np.ndarray):
-                cv2.imwrite(full_annotated_path, full_frame_annotated, [cv2.IMWRITE_WEBP_QUALITY, 80])
-                # Generate thumbnail
-                thumb_path = full_annotated_path.replace('_ann.webp', '_ann_thumb.webp')
-                thumb = cv2.resize(full_frame_annotated, (140, 80))
-                cv2.imwrite(thumb_path, thumb, [cv2.IMWRITE_WEBP_QUALITY, 70])
+                frame_copy = full_frame_annotated.copy()
+                
+                # Define helper for async writing of annotated frame and thumbnail
+                def async_write_task(path, img):
+                    try:
+                        cv2.imwrite(path, img, [cv2.IMWRITE_WEBP_QUALITY, 80])
+                        # Generate thumbnail
+                        thumb_path = path.replace('_ann.webp', '_ann_thumb.webp')
+                        thumb = cv2.resize(img, (140, 80))
+                        cv2.imwrite(thumb_path, thumb, [cv2.IMWRITE_WEBP_QUALITY, 70])
+                    except Exception as ex:
+                        logging.error(f"Error in async_write_task: {ex}")
+                
+                self.api_thread_pool.submit(async_write_task, full_annotated_path, frame_copy)
 
             urls = {
                 'image_full_annotated': f"/static/images/detections/full_annotated/{full_annotated_name}",
@@ -1376,9 +1562,9 @@ class CameraProcessor:
             }
         except Exception as e:
             if self.headless_mode:
-                logging.error(f"[{self.name}] Error saving detection images: {e}")
+                logging.error(f"[{self.name}] Error preparing async detection images: {e}")
             else:
-                print(f"❌ [{self.name}] Error saving detection images: {e}")
+                print(f"❌ [{self.name}] Error preparing async detection images: {e}")
         return urls
 
     def send_detection_to_admin_panel(self, plate, confidence, processing_time, verification_status, image_urls=None):
@@ -1437,150 +1623,9 @@ class CameraProcessor:
 # GLOBAL PROCESSOR THREAD: Consumes frames from global queue and processes them
 # ============================================================================
 
-def process_frame_task(frame_data):
-    """
-    Task to process a single frame using the camera processor
-    """
-    try:
-        frame = frame_data['frame']
-        camera_id = frame_data['camera_id']
-        camera_processor = frame_data['camera_processor']
-        frame_number = frame_data['frame_number']
-
-        # per-camera throttle
-        now = time.time()
-        last_t = _last_processed_time.get(camera_id, 0)
-        if now - last_t < MIN_PROCESS_INTERVAL:
-            camera_processor.current_processed_frame = frame
-            return
-        _last_processed_time[camera_id] = now
-
-        # Process every Nth frame to limit FPS
-        if PROCESS_EVERY_NTH_FRAME > 1 and frame_number % PROCESS_EVERY_NTH_FRAME != 0:
-            camera_processor.current_processed_frame = frame
-            return
-
-        # Process the frame
-        processed_frame, detected_texts = camera_processor.process_frame(frame)
-        
-        # Store processed frame back in camera processor for display
-        camera_processor.current_processed_frame = processed_frame
-
-        if detected_texts:
-            if camera_processor.headless_mode:
-                logging.info(f"[{camera_processor.name}] Detected plates: {detected_texts}")
-            else:
-                print(f"📹 [{camera_processor.name}] Detected plates: {detected_texts}")
-
-            # Save frame in headless mode if enabled
-            if camera_processor.headless_mode and camera_processor.save_frames and detected_texts:
-                current_time = time.time()
-                if current_time - camera_processor.last_frame_save >= camera_processor.frame_save_interval:
-                    camera_processor.save_detection_frame(processed_frame, detected_texts)
-                    camera_processor.last_frame_save = current_time
-    except Exception as e:
-        print(f"❌ Error in process_frame_task: {e}")
-
-# Global ThreadPool for frame processing
-# Optimization 3: Set max_workers = 3 to reduce context switching
-processor_pool = concurrent.futures.ThreadPoolExecutor(max_workers=3)
-
-def global_frame_processor():
-    """
-    THE GLOBAL PROCESSOR THREAD (1 thread to dispatch to ThreadPool)
-    - Consumes frames from per-camera queues via round-robin
-    - Submits frames to the ThreadPoolExecutor for parallel processing
-    """
-    global stop_processing, cameras_dict
-
-    while not stop_processing:
-        if not cameras_dict:
-            time.sleep(0.1)
-            continue
-            
-        processed_any = False
-        
-        # Optimization 2: Round-robin scheduler
-        for cam_id, camera_processor in list(cameras_dict.items()):
-            if stop_processing:
-                break
-                
-            if not camera_processor.enabled:
-                continue
-                
-            try:
-                # Non-blocking get from this camera's queue
-                frame_data = camera_processor.frame_queue.get_nowait()
-                processor_pool.submit(process_frame_task, frame_data)
-                processed_any = True
-            except queue.Empty:
-                pass
-            except Exception as e:
-                print(f"❌ Error in global frame processor dispatcher for camera {cam_id}: {e}")
-                
-        # If no frames were processed across all cameras, sleep briefly
-        if not processed_any:
-            time.sleep(0.05)
-
-
 # ============================================================================
-# OPTIONAL DISPLAY THREAD: Creates camera grid and handles display
+# Obsolete background thread workers removed in favor of multiprocessing pool
 # ============================================================================
-
-def display_thread_worker(cameras_list, window_title, grid_layout, headless_settings):
-    """
-    OPTIONAL DISPLAY THREAD (1 thread for display)
-    - Creates camera grid from latest processed frames
-    - Handles key input and window management
-    - Headless mode skips this entirely
-    - Display unavailable → gracefully exits
-    """
-    global stop_processing, HEADLESS_MODE, CAN_USE_DISPLAY
-
-    # Safety check: if display isn't actually available, exit gracefully
-    if HEADLESS_MODE or not CAN_USE_DISPLAY:
-        print("📊 Display not available: skipping display thread")
-        return
-
-    last_status_update = 0
-    status_update_interval = headless_settings.get('status_update_interval', 10)
-
-    while not stop_processing:
-        try:
-            # Display mode - show camera grid
-            grid_frame, grid_cameras = create_camera_grid(cameras_list, grid_layout)
-
-            if grid_frame is not None:
-                all_enabled_cameras = [cam for cam in cameras_list if cam.enabled]
-                total_plates = sum(cam.get_stats()['total_plates'] for cam in all_enabled_cameras)
-                total_cameras = len(all_enabled_cameras)
-                displayed_cameras = len(grid_cameras) if grid_cameras else 0
-
-                cv2.putText(grid_frame, f"Total Plates: {total_plates} | Cameras: {displayed_cameras}/{total_cameras}", (10, 30),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-                cv2.putText(grid_frame, "Press 'q' to quit, 's' to save frame", (10, 60),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-
-                cv2.imshow(window_title, grid_frame)
-
-            # Handle key presses
-            key = cv2.waitKey(1) & 0xFF
-            if key == ord('q'):
-                stop_processing = True
-                break
-            elif key == ord('s'):
-                # Save current frame
-                timestamp = time.strftime("%Y%m%d_%H%M%S")
-                filename = f"multi_camera_frame_{timestamp}.jpg"
-                if grid_frame is not None:
-                    cv2.imwrite(filename, grid_frame)
-                    print(f"📸 Frame saved as {filename}")
-
-            time.sleep(0.033)   # ~30 fps cap
-
-        except Exception as e:
-            print(f"❌ Error in display thread: {e}")
-            continue
 
 
 def create_camera_grid(cameras, grid_layout="2x2"):
@@ -1782,10 +1827,8 @@ def signal_handler(signum, frame):
 
 
 def main():
-    global stop_processing, plate_logger, processor_thread, display_thread, cameras_dict, PROCESS_EVERY_NTH_FRAME
-
-    # Load models
-    load_models()
+    global stop_processing, plate_logger, cameras_dict, PROCESS_EVERY_NTH_FRAME
+    global inference_executor, inference_semaphore
 
     # Load configuration
     config = load_config()
@@ -1812,7 +1855,6 @@ def main():
 
     # Initialize plate logger
     global_settings = config['global_settings']
-    # Use config frame_skip in processor loop; enforce safe minimum.
     try:
         PROCESS_EVERY_NTH_FRAME = max(1, int(global_settings.get('frame_skip', 2)))
     except Exception:
@@ -1839,6 +1881,23 @@ def main():
         print("⚠️ Real-time features will be disabled")
         websocket_client = None
 
+    # Initialize multiprocessing Semaphore and ProcessPoolExecutor (Section 1.1 / 1.2)
+    import threading
+    import multiprocessing
+    inference_semaphore = threading.Semaphore(2)
+    
+    yolo_path = os.path.join(os.path.dirname(__file__), "yolov8_best_ANPR_Vamsi.pt")
+    lprnet_path = os.path.join(os.path.dirname(__file__), "newmodel", "best_lprnet.pth")
+    
+    print("🚀 Initializing ProcessPoolExecutor with 2 worker processes (spawn context)...")
+    spawn_context = multiprocessing.get_context("spawn")
+    inference_executor = concurrent.futures.ProcessPoolExecutor(
+        max_workers=2,
+        initializer=init_worker,
+        initargs=(yolo_path, lprnet_path),
+        mp_context=spawn_context
+    )
+
     # Create camera processors (dict-based)
     cameras_list = []
     for camera_config in config['cameras']:
@@ -1858,49 +1917,68 @@ def main():
 
     if not any(cam.enabled for cam in cameras_list):
         print("❌ No cameras could be started. Exiting.")
+        # Shutdown executor
+        inference_executor.shutdown(wait=False)
         return
 
-    # ========================================================================
-    # SPAWN N+2 GLOBAL THREADS
-    # ========================================================================
-
-    # 1. Start global processor thread
-    print("🚀 Starting global frame processor thread...")
-    processor_thread = Thread(target=global_frame_processor, daemon=True)
-    processor_thread.start()
-
-    # 2. Start display thread (if not headless and display available)
+    # visual grid render or headless loop configuration
     window_title = display_settings.get('window_title', 'Multi-Camera ANPR System')
     grid_layout = display_settings.get('grid_layout', '2x2')
-
-    if not HEADLESS_MODE and CAN_USE_DISPLAY:
-        print("🚀 Starting display thread...")
-        display_thread = Thread(target=display_thread_worker, 
-                              args=(cameras_list, window_title, grid_layout, headless_settings),
-                              daemon=True)
-        display_thread.start()
-    else:
-        if HEADLESS_MODE:
-            print("📊 Headless mode: skipping display thread")
-        else:
-            print("📊 Display not available: skipping display thread (running in headless fallback)")
-        # Status update loop for headless mode
-        last_status_update = 0
-        status_update_interval = headless_settings.get('status_update_interval', 10)
+    
+    show_gui = not HEADLESS_MODE and CAN_USE_DISPLAY
+    last_status_update = 0
+    status_update_interval = headless_settings.get('status_update_interval', 10)
 
     try:
         trigger_file = 'reload_trigger.txt'
         config_mtime = os.path.getmtime(trigger_file) if os.path.exists(trigger_file) else 0
         
-        # Main loop (minimal work - just monitoring)
         while not stop_processing:
-            if HEADLESS_MODE:
-                # Headless status update
+            if show_gui:
+                # GUI Render Loop (Section 6.1 - 6.3)
+                try:
+                    grid_frame, grid_cameras = create_camera_grid(cameras_list, grid_layout)
+                    if grid_frame is not None:
+                        # Scale grid image width to max 960px to save render CPU (Section 6.3)
+                        h_g, w_g = grid_frame.shape[:2]
+                        if w_g > 960:
+                            scale_g = 960.0 / w_g
+                            grid_frame = cv2.resize(grid_frame, (960, int(h_g * scale_g)), interpolation=cv2.INTER_LINEAR)
+                            
+                        all_enabled_cameras = [cam for cam in cameras_list if cam.enabled]
+                        total_plates = sum(cam.get_stats()['total_plates'] for cam in all_enabled_cameras)
+                        total_cameras = len(all_enabled_cameras)
+                        displayed_cameras = len(grid_cameras) if grid_cameras else 0
+                        
+                        cv2.putText(grid_frame, f"Total Plates: {total_plates} | Cameras: {displayed_cameras}/{total_cameras}", (10, 30),
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                        cv2.putText(grid_frame, "Press 'q' to quit, 's' to save frame", (10, 60),
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+                        
+                        cv2.imshow(window_title, grid_frame)
+                        
+                    # Handle key presses and cap rendering at 10 FPS with cv2.waitKey(100) (Section 6.2)
+                    key = cv2.waitKey(100) & 0xFF
+                    if key == ord('q'):
+                        stop_processing = True
+                        break
+                    elif key == ord('s'):
+                        # Save current frame
+                        timestamp = time.strftime("%Y%m%d_%H%M%S")
+                        filename = f"multi_camera_frame_{timestamp}.jpg"
+                        if grid_frame is not None:
+                            cv2.imwrite(filename, grid_frame)
+                            print(f"📸 Frame saved as {filename}")
+                except Exception as e:
+                    print(f"❌ Error in GUI render loop: {e}")
+            else:
+                # Headless status update monitor (runs on main thread)
                 if time.time() - last_status_update >= status_update_interval:
                     all_enabled_cameras = [cam for cam in cameras_list if cam.enabled]
                     total_plates = sum(cam.get_stats()['total_plates'] for cam in all_enabled_cameras)
                     logging.info(f"Status Update - Total Plates: {total_plates} | Active Cameras: {len(all_enabled_cameras)}")
                     last_status_update = time.time()
+                time.sleep(0.1)
 
             # Hot reloading check
             current_mtime = os.path.getmtime(trigger_file) if os.path.exists(trigger_file) else 0
@@ -1910,11 +1988,9 @@ def main():
                 new_config = load_config()
                 if new_config:
                     reload_cameras_from_config(new_config)
-                    # Update cameras_list in place so display thread sees it
+                    # Update cameras_list in place so render loop sees it
                     cameras_list.clear()
                     cameras_list.extend(cameras_dict.values())
-
-            time.sleep(0.1)
 
     except KeyboardInterrupt:
         print("\n🛑 Interrupted by user")
@@ -1933,9 +2009,10 @@ def main():
                 else:
                     print(f"❌ Error stopping camera {camera.name}: {e}")
 
-        # Wait for processor thread to finish
-        if processor_thread and processor_thread.is_alive():
-            processor_thread.join(timeout=3.0)
+        # Shutdown multiprocessing executor gracefully (Section 1.1 / 1.2)
+        if inference_executor:
+            print("🛑 Shutting down multiprocessing inference executor...")
+            inference_executor.shutdown(wait=True)
 
         # Close display window
         cv2.destroyAllWindows()

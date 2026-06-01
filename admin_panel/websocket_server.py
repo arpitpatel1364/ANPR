@@ -24,6 +24,7 @@ class WebSocketManager:
     
     def __init__(self, socketio: SocketIO):
         self.socketio = socketio
+        self.lock = threading.Lock()
         self.connected_clients: Set[str] = set()
         self.rooms = {
             'dashboard': set(),
@@ -32,13 +33,10 @@ class WebSocketManager:
             'system': set()
         }
         self.update_queue = queue.Queue()
-        self.running = False
+        self.running = True
         self.last_detection_time = None
         self.last_detection_count = 0
         self.camera_status_cache = {}
-        
-        # Start background update thread
-        self.start_update_thread()
         
         # Start background camera poll thread
         self.start_camera_poll_thread()
@@ -63,37 +61,14 @@ class WebSocketManager:
                         for future in concurrent.futures.as_completed(futures):
                             try:
                                 cam_id = futures[future]
-                                self.camera_status_cache[cam_id] = future.result()
+                                res = future.result()
+                                with self.lock:
+                                    self.camera_status_cache[cam_id] = res
                             except Exception:
                                 pass
             except Exception as e:
                 print(f"Error in camera poll loop: {e}")
             time.sleep(30)
-            
-    def start_update_thread(self):
-        """Start background thread for sending updates"""
-        self.running = True
-        update_thread = threading.Thread(target=self._update_loop, daemon=True)
-        update_thread.start()
-    
-    def _update_loop(self):
-        """Background loop for sending real-time updates"""
-        while self.running:
-            try:
-                # Check for new detections
-                self._check_new_detections()
-                
-                # Send system status updates
-                self._send_system_status()
-                
-                # Send camera status updates
-                self._send_camera_status()
-                
-                time.sleep(2)  # Update every 2 seconds
-                
-            except Exception as e:
-                print(f"Error in WebSocket update loop: {e}")
-                time.sleep(5)
     
     def _check_new_detections(self):
         """Check for new detections and broadcast to clients"""
@@ -214,9 +189,10 @@ class WebSocketManager:
             
             for camera in cameras:
                 # Test camera connection in real-time
-                connection_status = self.camera_status_cache.get(camera['id'], {
-                    'status': 'pending', 'quality': 'unknown', 'response_time': 0, 'error': ''
-                })
+                with self.lock:
+                    connection_status = self.camera_status_cache.get(camera['id'], {
+                        'status': 'pending', 'quality': 'unknown', 'response_time': 0, 'error': ''
+                    })
                 
                 camera_status.append({
                     'id': camera['id'],
@@ -326,15 +302,17 @@ class WebSocketManager:
     
     def add_client(self, client_id: str, room: str = 'dashboard'):
         """Add client to room"""
-        self.connected_clients.add(client_id)
-        if room in self.rooms:
-            self.rooms[room].add(client_id)
+        with self.lock:
+            self.connected_clients.add(client_id)
+            if room in self.rooms:
+                self.rooms[room].add(client_id)
     
     def remove_client(self, client_id: str):
         """Remove client from all rooms"""
-        self.connected_clients.discard(client_id)
-        for room_clients in self.rooms.values():
-            room_clients.discard(client_id)
+        with self.lock:
+            self.connected_clients.discard(client_id)
+            for room_clients in self.rooms.values():
+                room_clients.discard(client_id)
     
     def _get_detections_today(self) -> int:
         """Get detections count for today"""

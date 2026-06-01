@@ -28,6 +28,7 @@ class ANPRSystemMonitor:
     """Monitor ANPR system status and performance"""
     
     def __init__(self):
+        self.lock = threading.Lock()
         self.anpr_process = None
         self.last_detection_time = None
         self.detection_queue = queue.Queue()
@@ -50,11 +51,16 @@ class ANPRSystemMonitor:
         while True:
             try:
                 # Update system stats
-                self.system_stats.update({
-                    'cpu_usage': psutil.cpu_percent(interval=1),
-                    'memory_usage': psutil.virtual_memory().percent,
-                    'last_update': datetime.now().isoformat()
-                })
+                cpu_p = psutil.cpu_percent(interval=1)
+                mem_p = psutil.virtual_memory().percent
+                last_up = datetime.now().isoformat()
+                
+                with self.lock:
+                    self.system_stats.update({
+                        'cpu_usage': cpu_p,
+                        'memory_usage': mem_p,
+                        'last_update': last_up
+                    })
                 
                 # Check ANPR process
                 self._check_anpr_process()
@@ -74,12 +80,14 @@ class ANPRSystemMonitor:
             for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
                 try:
                     if proc.info['cmdline'] and 'app_multi_camera_lprnet.py' in ' '.join(proc.info['cmdline']):
-                        self.anpr_process = proc
+                        with self.lock:
+                            self.anpr_process = proc
                         return True
                 except (psutil.NoSuchProcess, psutil.AccessDenied):
                     continue
             
-            self.anpr_process = None
+            with self.lock:
+                self.anpr_process = None
             return False
             
         except Exception as e:
@@ -95,9 +103,10 @@ class ANPRSystemMonitor:
                     config = json.load(f)
                 
                 cameras = config.get('cameras', [])
+                new_camera_status = {}
                 for camera in cameras:
                     camera_id = camera['id']
-                    self.camera_status[camera_id] = {
+                    new_camera_status[camera_id] = {
                         'name': camera['name'],
                         'location': camera['location'],
                         'enabled': camera['enabled'],
@@ -105,30 +114,38 @@ class ANPRSystemMonitor:
                         'last_check': datetime.now().isoformat(),
                         'status': 'unknown'  # Will be updated by actual connection test
                     }
+                with self.lock:
+                    self.camera_status = new_camera_status
         except Exception as e:
             print(f"Error checking camera status: {e}")
     
     def get_system_status(self) -> Dict[str, Any]:
         """Get comprehensive system status"""
-        is_running = self.anpr_process is not None and self.anpr_process.is_running()
+        with self.lock:
+            proc = self.anpr_process
+            is_running = proc is not None and proc.is_running()
+            stats = self.system_stats.copy()
+            cams = self.camera_status.copy()
+            last_det = self.last_detection_time
         
         return {
             'anpr_service': {
                 'running': is_running,
-                'pid': self.anpr_process.pid if self.anpr_process else None,
-                'uptime': self._get_process_uptime() if is_running else 0
+                'pid': proc.pid if proc else None,
+                'uptime': self._get_process_uptime(proc) if is_running else 0
             },
-            'system_stats': self.system_stats,
-            'cameras': self.camera_status,
-            'last_detection': self.last_detection_time,
+            'system_stats': stats,
+            'cameras': cams,
+            'last_detection': last_det,
             'timestamp': datetime.now().isoformat()
         }
     
-    def _get_process_uptime(self) -> float:
+    def _get_process_uptime(self, proc=None) -> float:
         """Get process uptime in seconds"""
         try:
-            if self.anpr_process:
-                return time.time() - self.anpr_process.create_time()
+            p = proc if proc is not None else self.anpr_process
+            if p:
+                return time.time() - p.create_time()
         except:
             pass
         return 0
