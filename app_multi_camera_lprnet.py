@@ -56,20 +56,15 @@ def load_headless_mode_from_config(config_path=None):
       - If config missing → headless
       - If key missing   → headless
     """
-    if config_path is None:
-        # Use path relative to this script's location
-        config_path = os.path.join(os.path.dirname(__file__), "config.json")
-    
     try:
-        with open(config_path, "r") as f:
-            cfg = json.load(f)
-
-        display_cfg = cfg.get("display_settings", {})
-        return bool(display_cfg.get("headless_mode", True))
-
+        cfg = config_db.load_config_from_db()
+        if cfg:
+            display_cfg = cfg.get("display_settings", {})
+            return bool(display_cfg.get("headless_mode", True))
     except Exception as e:
         print(f"!!..Early config load failed ({e}), forcing HEADLESS mode..!!")
-        return True
+    
+    return True
 
 
 # Decide mode BEFORE OpenCV / Qt loads
@@ -78,16 +73,16 @@ CAN_USE_DISPLAY = can_use_display() if not REQUESTED_HEADLESS_MODE else False
 HEADLESS_MODE = not CAN_USE_DISPLAY  # True if we can't use display
 
 if REQUESTED_HEADLESS_MODE and not CAN_USE_DISPLAY:
-    print(">> Starting in HEADLESS mode (from config.json)")
+    print(">> Starting in HEADLESS mode (from DB config)")
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
     os.environ["DISPLAY"] = ""
 elif REQUESTED_HEADLESS_MODE and CAN_USE_DISPLAY:
     print("⚠️  Config says headless_mode=true, but display is available")
-    print(">> Starting in HEADLESS mode (respecting config.json)")
+    print(">> Starting in HEADLESS mode (respecting DB config)")
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
     os.environ["DISPLAY"] = ""
 elif not REQUESTED_HEADLESS_MODE and CAN_USE_DISPLAY:
-    print(">> Starting in DISPLAY mode (from config.json and display detected)")
+    print(">> Starting in DISPLAY mode (from DB config and display detected)")
     os.environ["QT_QPA_PLATFORM"] = "xcb"
 elif not REQUESTED_HEADLESS_MODE and not CAN_USE_DISPLAY:
     print("⚠️  Config says headless_mode=false, but no display detected")
@@ -492,7 +487,7 @@ def worker_batch_inference(batch_inputs, inference_imgsz, confidence_threshold):
     import numpy as np
     import cv2
     import torch
-    from LPRNet import predict_plate
+    from LPRNet import predict_plate, predict_plates_batch
     
     results = []
     
@@ -579,7 +574,10 @@ def worker_batch_inference(batch_inputs, inference_imgsz, confidence_threshold):
     # Map back results to corresponding inputs
     yolo_result_idx = 0
     
-    # 3. Process detections sequentially and run LPRNet
+    # 3. Collect all valid crops across all cameras
+    all_crops = []
+    crop_metadata = []
+    
     for idx, input_data in enumerate(preprocessed_inputs):
         camera_id = input_data['camera_id']
         frame_for_detection = input_data['frame_for_detection']
@@ -587,10 +585,8 @@ def worker_batch_inference(batch_inputs, inference_imgsz, confidence_threshold):
         roi_offset_y = input_data['roi_offset_y']
         
         if frame_for_detection is None:
-            results.append((camera_id, []))
             continue
             
-        detections = []
         try:
             if yolo_result_idx < len(yolo_results_batch):
                 yolo_results = yolo_results_batch[yolo_result_idx]
@@ -623,24 +619,38 @@ def worker_batch_inference(batch_inputs, inference_imgsz, confidence_threshold):
                         if cropped_plate.dtype != np.uint8:
                             cropped_plate = cropped_plate.astype(np.uint8)
                             
-                        # LPRNet OCR Prediction
-                        try:
-                            license_plate_text = predict_plate(worker_lprnet, cropped_plate, worker_device)
-                        except Exception as ocr_error:
-                            print(f"⚠️ OCR Error in worker: {ocr_error}")
-                            continue
-                            
-                        detections.append({
-                            'plate_text': license_plate_text,
-                            'bbox': (x1, y1, x2, y2),
-                            'roi_offset': (roi_offset_x, roi_offset_y),
-                            'confidence': conf
+                        all_crops.append(cropped_plate)
+                        crop_metadata.append({
+                            'camera_id': camera_id,
+                            'x1': x1, 'y1': y1, 'x2': x2, 'y2': y2,
+                            'roi_offset_x': roi_offset_x,
+                            'roi_offset_y': roi_offset_y,
+                            'conf': conf
                         })
-                        
-            results.append((camera_id, detections))
         except Exception as e:
-            print(f"❌ Error in worker_batch_inference for camera {camera_id}: {e}")
-            results.append((camera_id, []))
+            print(f"❌ Error collecting crops for camera {camera_id}: {e}")
+
+    # Initialize results dict
+    camera_detections = {input_data['camera_id']: [] for input_data in preprocessed_inputs}
+    
+    # 4. Run batched LPRNet OCR Prediction
+    if all_crops:
+        try:
+            plate_texts = predict_plates_batch(worker_lprnet, all_crops, worker_device)
+            for i, text in enumerate(plate_texts):
+                meta = crop_metadata[i]
+                camera_detections[meta['camera_id']].append({
+                    'plate_text': text,
+                    'bbox': (meta['x1'], meta['y1'], meta['x2'], meta['y2']),
+                    'roi_offset': (meta['roi_offset_x'], meta['roi_offset_y']),
+                    'confidence': meta['conf']
+                })
+        except Exception as ocr_error:
+            print(f"⚠️ Batched OCR Error in worker: {ocr_error}")
+
+    for input_data in preprocessed_inputs:
+        cam_id = input_data['camera_id']
+        results.append((cam_id, camera_detections[cam_id]))
             
     return results
 
@@ -1573,32 +1583,21 @@ class CameraProcessor:
                 continue
 
     def _persist_roi_to_config(self):
-        """Save ROI to config.json"""
+        """Save ROI to Database"""
         try:
-            with open('config.json', 'r') as f:
-                config_data = json.load(f)
-
-            cameras_cfg = config_data.get('cameras', [])
-            updated = False
-            for cam_cfg in cameras_cfg:
-                if cam_cfg.get('id') == self.camera_id:
-                    if self.roi is not None:
-                        x1, y1, x2, y2 = self.roi
-                        cam_cfg['roi'] = {'x1': int(x1), 'y1': int(y1), 'x2': int(x2), 'y2': int(y2)}
-
-                    if self.roi_polygon is not None and len(self.roi_polygon) >= 3:
-                        cam_cfg['roi_polygon'] = [{'x': int(px), 'y': int(py)} for (px, py) in self.roi_polygon]
-
-                    updated = True
-                    break
-
-            if updated:
-                config_data['cameras'] = cameras_cfg
-                with open('config.json', 'w') as f:
-                    json.dump(config_data, f, indent=2)
-                print(f"💾 Saved ROI for camera '{self.name}' into config.json: {self.roi}")
+            update_data = {}
+            if self.roi is not None:
+                x1, y1, x2, y2 = self.roi
+                update_data['roi'] = {'x1': int(x1), 'y1': int(y1), 'x2': int(x2), 'y2': int(y2)}
+                
+            if self.roi_polygon is not None and len(self.roi_polygon) >= 3:
+                update_data['roi_polygon'] = [{'x': int(px), 'y': int(py)} for (px, py) in self.roi_polygon]
+                
+            if update_data:
+                config_db.update_camera_in_db(self.camera_id, update_data)
+                print(f"💾 Saved ROI for camera '{self.name}' into Database.")
         except Exception as e:
-            print(f"⚠️ [{self.name}] Failed to persist ROI to config.json: {e}")
+            print(f"⚠️ [{self.name}] Failed to persist ROI to Database: {e}")
 
     def _maybe_select_roi(self):
         """Interactive ROI selection with timeout protection (skipped in headless mode or when no display is available)"""
@@ -2123,21 +2122,16 @@ def create_camera_grid(cameras, grid_layout="2x2"):
 
 
 def load_config():
-    """Load configuration from database with fallback to config.json"""
+    """Load configuration from database"""
     try:
         config = config_db.load_config_from_db()
         if config:
             return config
             
-        with open('config.json', 'r') as f:
-            config = json.load(f)
-        print("✅ Configuration loaded from config.json (fallback)")
-        return config
-    except FileNotFoundError:
-        print("❌ config.json not found. Using default settings.")
+        print("❌ DB Configuration empty. Using default settings.")
         return None
-    except json.JSONDecodeError as e:
-        print(f"❌ Error parsing config.json: {e}. Using default settings.")
+    except Exception as e:
+        print(f"❌ Error loading DB config: {e}")
         return None
 
 

@@ -615,28 +615,14 @@ if (typeof showWarning === 'undefined') {
     }
 }
 
-// Camera status polling interval
 let cameraStatusInterval = null;
 
 // Initialize camera status updates on page load
 document.addEventListener('DOMContentLoaded', function() {
-    // Start polling for camera status
-    startCameraStatusPolling();
-    
-    // Check all cameras on page load
     refreshAllCamerasStatus();
 });
 
-// Start polling for camera status updates
 function startCameraStatusPolling() {
-    // Poll every 60 seconds to avoid unnecessary API calls
-    if (cameraStatusInterval) {
-        clearInterval(cameraStatusInterval);
-    }
-    
-    cameraStatusInterval = setInterval(() => {
-        refreshAllCamerasStatus();
-    }, 60000); // 60 seconds
 }
 
 // Refresh status for all cameras

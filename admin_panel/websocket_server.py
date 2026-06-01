@@ -36,7 +36,9 @@ class WebSocketManager:
         self.running = True
         self.last_detection_time = None
         self.last_detection_count = 0
+        self.last_seen_id = 0
         self.camera_status_cache = {}
+        self._anpr_running_cache = (False, 0.0)
         
         # Start background camera poll thread
         self.start_camera_poll_thread()
@@ -50,10 +52,9 @@ class WebSocketManager:
         """Background loop for checking camera connections every 30s"""
         while self.running:
             try:
-                config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'config.json')
-                if os.path.exists(config_path):
-                    with open(config_path, 'r') as f:
-                        config = json.load(f)
+                from scripts.config_db import load_config_from_db
+                config = load_config_from_db()
+                if config:
                     
                     cameras = config.get('cameras', [])
                     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
@@ -74,34 +75,55 @@ class WebSocketManager:
         """Check for new detections and broadcast to clients"""
         try:
             with DatabaseConnection() as db:
-                # Count current detections
-                db.execute("SELECT COUNT(*) as count FROM detections")
-                result = db.fetchone()
-                current_count = result['count'] if result else 0
-                
-                # If count increased, get new detections
-                if current_count > self.last_detection_count:
-                    new_detections = self._get_recent_detections(5)  # Get last 5
-                    
-                    if new_detections:
-                        # broadcast to ALL rooms (not just 'detections'),
-                        # so Dashboard users also receive real-time updates
-                        self.socketio.emit('new_detections', {
-                            'detections': new_detections,
-                            'count': current_count,
-                            'timestamp': datetime.now().isoformat()
-                        }, broadcast=True)
-                        
-                        # Also send to dashboard
-                        self.socketio.emit('detection_update', {
-                            'new_count': current_count - self.last_detection_count,
-                            'total_count': current_count,
-                            'latest_detection': new_detections[0] if new_detections else None
-                        }, room='dashboard')
-                    
-                    self.last_detection_count = current_count
+                # Replaces the previous COUNT(*) + separate SELECT pattern (two DB round-trips).
+                query = """
+                    SELECT id, timestamp, license_plate, camera_source, detection_confidence,
+                           verification_status, access_granted,
+                           image_full_annotated, bbox_x1, bbox_y1, bbox_x2, bbox_y2
+                    FROM detections
+                    WHERE id > %s
+                    ORDER BY id DESC
+                    LIMIT 5
+                """
+                db.execute(query, (self.last_seen_id,))
+                rows = db.fetchall()
+
+                if rows:
+                    new_detections = []
+                    max_id = self.last_seen_id
+                    for row in rows:
+                        new_detections.append({
+                            'timestamp': row['timestamp'].isoformat() if row['timestamp'] else '',
+                            'plate': row['license_plate'],
+                            'camera': row['camera_source'],
+                            'confidence': float(row['detection_confidence']),
+                            'verification_status': row['verification_status'],
+                            'access_granted': row['access_granted'],
+                            'image_full_annotated': row['image_full_annotated'] or '',
+                            'bbox_x1': row['bbox_x1'],
+                            'bbox_y1': row['bbox_y1'],
+                            'bbox_x2': row['bbox_x2'],
+                            'bbox_y2': row['bbox_y2']
+                        })
+                        if row['id'] > max_id:
+                            max_id = row['id']
+
+                    self.last_seen_id = max_id
                     self.last_detection_time = datetime.now().isoformat()
-                
+
+                    # Broadcast to all connected clients
+                    self.socketio.emit('new_detections', {
+                        'detections': new_detections,
+                        'count': max_id,
+                        'timestamp': self.last_detection_time
+                    }, broadcast=True)
+
+                    self.socketio.emit('detection_update', {
+                        'new_count': len(new_detections),
+                        'total_count': max_id,
+                        'latest_detection': new_detections[0] if new_detections else None
+                    }, room='dashboard')
+
         except Exception as e:
             print(f"Error checking new detections: {e}")
     
@@ -162,27 +184,33 @@ class WebSocketManager:
     
     def _check_anpr_running(self) -> bool:
         """Check if ANPR system is running"""
+        cached_result, cached_at = self._anpr_running_cache
+        if time.time() - cached_at < 10.0:
+            return cached_result
+
         try:
             import psutil
+            result = False
             for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
                 try:
                     if proc.info['cmdline'] and 'app_multi_camera_lprnet.py' in ' '.join(proc.info['cmdline']):
-                        return True
+                        result = True
+                        break
                 except (psutil.NoSuchProcess, psutil.AccessDenied):
                     continue
-            return False
-        except:
+            self._anpr_running_cache = (result, time.time())
+            return result
+        except Exception:
+            self._anpr_running_cache = (False, time.time())
             return False
     
     def _send_camera_status(self):
         """Send enhanced camera status updates with real-time monitoring"""
         try:
-            config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'config.json')
-            if not os.path.exists(config_path):
+            from scripts.config_db import load_config_from_db
+            config = load_config_from_db()
+            if not config:
                 return
-            
-            with open(config_path, 'r') as f:
-                config = json.load(f)
             
             cameras = config.get('cameras', [])
             camera_status = []
@@ -506,38 +534,16 @@ def register_websocket_events(socketio: SocketIO):
                 })
                 return
             
-            # Load current config
-            config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'config.json')
-            if not os.path.exists(config_path):
+            from scripts.config_db import update_camera_status_in_db
+            
+            success = update_camera_status_in_db(camera_id, enabled)
+            
+            if not success:
                 emit('camera_toggle_result', {
                     'success': False,
-                    'error': 'Config file not found'
+                    'error': 'Camera not found or DB error'
                 })
                 return
-            
-            with open(config_path, 'r') as f:
-                config = json.load(f)
-            
-            # Find and update camera
-            cameras = config.get('cameras', [])
-            camera_found = False
-            
-            for camera in cameras:
-                if camera['id'] == camera_id:
-                    camera['enabled'] = enabled
-                    camera_found = True
-                    break
-            
-            if not camera_found:
-                emit('camera_toggle_result', {
-                    'success': False,
-                    'error': 'Camera not found'
-                })
-                return
-            
-            # Save updated config
-            with open(config_path, 'w') as f:
-                json.dump(config, f, indent=2)
             
             # Broadcast updated camera status
             ws_manager._send_camera_status()
@@ -572,17 +578,14 @@ def register_websocket_events(socketio: SocketIO):
                 })
                 return
             
-            # Load camera config
-            config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'config.json')
-            if not os.path.exists(config_path):
+            from scripts.config_db import load_config_from_db
+            config = load_config_from_db()
+            if not config:
                 emit('camera_test_result', {
                     'success': False,
-                    'error': 'Config file not found'
+                    'error': 'Database config not found'
                 })
                 return
-            
-            with open(config_path, 'r') as f:
-                config = json.load(f)
             
             # Find camera
             cameras = config.get('cameras', [])

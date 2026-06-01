@@ -91,12 +91,6 @@
     font-size: 4rem;
     color: white;
     margin-bottom: 1.5rem;
-    animation: float 3s ease-in-out infinite;
-}
-
-@keyframes float {
-    0%, 100% { transform: translateY(0px); }
-    50% { transform: translateY(-10px); }
 }
 
 .login-title {
@@ -163,13 +157,7 @@
     font-size: 3.5rem;
     color: var(--primary);
     margin-bottom: 1.5rem;
-    animation: pulse 2s infinite;
     display: block;
-}
-
-@keyframes pulse {
-    0%, 100% { transform: scale(1); }
-    50% { transform: scale(1.05); }
 }
 
 .login-form-title {
@@ -191,7 +179,7 @@
     border-radius: var(--border-radius);
     padding: 1rem 1.25rem;
     font-size: 1rem;
-    transition: all 0.3s ease;
+    transition: none;
     background-color: var(--gray-50);
     font-family: 'Inter', sans-serif;
     height: auto;
@@ -201,7 +189,6 @@
     border-color: var(--primary);
     box-shadow: 0 0 0 0.2rem rgba(114, 169, 84, 0.25);
     background-color: var(--secondary);
-    transform: translateY(-2px);
     outline: none;
 }
 
@@ -237,7 +224,7 @@
     border-left: none;
     background-color: var(--gray-50);
     color: var(--gray-600);
-    transition: all 0.3s ease;
+    transition: none;
     padding: 1rem 1.25rem;
     border-radius: 0 var(--border-radius) var(--border-radius) 0;
     height: auto;
@@ -268,7 +255,7 @@
     padding: 1.25rem 2.5rem;
     font-weight: 600;
     font-size: 1.1rem;
-    transition: all 0.3s ease;
+    transition: opacity 0.15s ease;
     text-transform: uppercase;
     letter-spacing: 0.5px;
     color: var(--secondary);
@@ -283,14 +270,7 @@
 }
 
 .btn-primary::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: -100%;
-    width: 100%;
-    height: 100%;
-    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
-    transition: left 0.5s ease;
+    content: none;
 }
 
 .btn-primary:hover::before {
@@ -298,13 +278,11 @@
 }
 
 .btn-primary:hover {
-    background: linear-gradient(135deg, var(--primary-dark), var(--primary));
-    transform: translateY(-2px);
-    box-shadow: 0 10px 20px rgba(114, 169, 84, 0.3);
+    opacity: 0.85;
 }
 
 .btn-primary:active {
-    transform: translateY(0);
+    opacity: 0.75;
 }
 
 .alert {
@@ -348,20 +326,13 @@
     border: 1px solid rgba(114, 169, 84, 0.15);
     border-radius: var(--border-radius);
     backdrop-filter: blur(10px);
-    transition: all 0.3s ease;
+    transition: opacity 0.15s ease;
     position: relative;
     overflow: hidden;
 }
 
 .text-center.mt-4::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: -100%;
-    width: 100%;
-    height: 100%;
-    background: linear-gradient(90deg, transparent, rgba(114, 169, 84, 0.1), transparent);
-    transition: left 0.6s ease;
+    content: none;
 }
 
 .text-center.mt-4:hover::before {
@@ -369,9 +340,7 @@
 }
 
 .text-center.mt-4:hover {
-    border-color: rgba(114, 169, 84, 0.3);
-    background: linear-gradient(135deg, rgba(114, 169, 84, 0.12), rgba(90, 138, 66, 0.12));
-    transform: translateY(-1px);
+    opacity: 0.85;
 }
 
 .text-center.mt-4 small {
@@ -390,7 +359,6 @@
 .text-center.mt-4 i {
     color: var(--primary);
     font-size: 1rem;
-    animation: pulse 2s infinite;
 }
 
 /* Form grid improvements */
@@ -584,44 +552,16 @@
 
 /* Success Animation */
 .success-animation {
-    animation: successPulse 0.6s ease-in-out;
-}
-
-@keyframes successPulse {
-    0% { transform: scale(1); }
-    50% { transform: scale(1.05); }
-    100% { transform: scale(1); }
+    /* scale pulse removed for low-end device performance */
 }
 
 /* Modern Enhancements */
 .login-form-container {
-    animation: slideInUp 0.6s ease-out;
-}
-
-@keyframes slideInUp {
-    from {
-        opacity: 0;
-        transform: translateY(30px);
-    }
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
+    /* entrance animation stripped for low-end device performance */
 }
 
 .login-left {
-    animation: slideInLeft 0.6s ease-out;
-}
-
-@keyframes slideInLeft {
-    from {
-        opacity: 0;
-        transform: translateX(-30px);
-    }
-    to {
-        opacity: 1;
-        transform: translateX(0);
-    }
+    /* entrance animation stripped for low-end device performance */
 }
 
 /* Modern Glass Effect */
@@ -687,7 +627,6 @@
     border-color: var(--primary);
     box-shadow: 0 0 0 0.2rem rgba(114, 169, 84, 0.25);
     background-color: var(--secondary);
-    transform: translateY(-2px);
     outline: none;
 }
 

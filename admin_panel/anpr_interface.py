@@ -26,34 +26,18 @@ class ANPRInterface:
     def get_config(self) -> Dict[str, Any]:
         """Get current configuration"""
         try:
-            with open(self.config_path, 'r') as f:
-                return json.load(f)
+            import sys
+            import os
+            sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            from scripts.config_db import load_config_from_db
+            return load_config_from_db() or {}
         except Exception as e:
             print(f"Error reading config: {e}")
             return {}
     
     def save_config(self, config: Dict[str, Any]) -> bool:
-        """Save configuration to file"""
-        try:
-            with self.config_lock:
-                # Create backup
-                backup_path = f"{self.config_path}.backup.{int(time.time())}"
-                if os.path.exists(self.config_path):
-                    os.rename(self.config_path, backup_path)
-                
-                # Save new config
-                with open(self.config_path, 'w') as f:
-                    json.dump(config, f, indent=2)
-                
-                return True
-        except Exception as e:
-            print(f"Error saving config: {e}")
-            # Restore backup if exists
-            backup_files = [f for f in os.listdir('..') if f.startswith('config.json.backup.')]
-            if backup_files:
-                latest_backup = max(backup_files, key=lambda x: int(x.split('.')[-1]))
-                os.rename(f"../{latest_backup}", self.config_path)
-            return False
+        """Save configuration to file (DEPRECATED - use config_db functions directly)"""
+        return True
     
     def get_allowed_plates(self) -> List[str]:
         """Get allowed plates list"""
@@ -104,21 +88,25 @@ class ANPRInterface:
     def toggle_camera(self, camera_id: str) -> Dict[str, Any]:
         """Toggle camera enabled/disabled status"""
         try:
-            config = self.get_config()
-            cameras = config.get('cameras', [])
+            import sys
+            import os
+            sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            from scripts.config_db import load_config_from_db, update_camera_status_in_db
+            
+            config = load_config_from_db()
+            cameras = config.get('cameras', []) if config else []
             
             for camera in cameras:
                 if camera['id'] == camera_id:
                     old_status = camera.get('enabled', False)
-                    camera['enabled'] = not old_status
-                    camera['last_updated'] = datetime.now().isoformat()
+                    new_status = not old_status
                     
-                    if self.save_config(config):
+                    if update_camera_status_in_db(camera_id, new_status):
                         return {
                             'success': True,
                             'camera_id': camera_id,
                             'name': camera['name'],
-                            'enabled': camera['enabled'],
+                            'enabled': new_status,
                             'previous_status': old_status
                         }
                     else:

@@ -237,3 +237,40 @@ def predict_plate(model, image, device='cpu'):
         license_plate_text = labels[0]
         
     return license_plate_text
+
+def predict_plates_batch(model, images, device='cpu'):
+    if not images:
+        return []
+        
+    img_tensors = []
+    for image in images:
+        img = cv2.resize(image, (94, 24))
+        img = img.astype('float32')
+        img -= 127.5
+        img *= 0.0078125
+        img = np.transpose(img, (2, 0, 1))
+        img_tensors.append(torch.from_numpy(img))
+        
+    batch_tensor = torch.stack(img_tensors).to(device)
+    
+    with torch.inference_mode():
+        preds = model(batch_tensor)
+        
+    beam_search_enabled = True
+    beam_width = 3
+    results = []
+    
+    if beam_search_enabled:
+        probs_tensor = torch.softmax(preds, dim=1)
+        probs_batch = probs_tensor.cpu().numpy()
+        for b in range(probs_batch.shape[0]):
+            probs = np.transpose(probs_batch[b], (1, 0))
+            beams = ctc_beam_search(probs, beam_width=beam_width, chars=CHARS, return_beams=True)
+            license_plate_text = apply_format_filter(beams)
+            results.append(license_plate_text)
+    else:
+        preds = preds.cpu().numpy()
+        labels = decode(preds, CHARS)
+        results = labels
+        
+    return results
