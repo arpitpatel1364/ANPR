@@ -37,7 +37,7 @@ function create_python_env() {
 
 function init_database() {
     echo "==> initializing MySQL database"
-    # note: assumes mysql/mariadb is running and config.json has correct credentials
+    # note: assumes mysql/mariadb is running and environment variables have correct credentials
     python3 scripts/init_database.py || die "database initialization failed"
 }
 

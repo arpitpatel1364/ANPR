@@ -22,7 +22,7 @@ def main():
         print("\nPlease ensure:")
         print("1. XAMPP MySQL is running")
         print("2. Database 'anpr_system' exists")
-        print("3. User credentials are correct in config.json")
+        print("3. User credentials are correct in environment variables")
         return
     
     print("✅ Database connection successful!")

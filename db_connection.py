@@ -33,20 +33,20 @@ _pool_lock = threading.Lock()
 
 
 def load_db_config() -> Dict[str, Any]:
-    """Load database configuration from config.json or use defaults"""
+    """Load database configuration from Environment Variables or use defaults"""
     try:
-        config_path = 'config.json'
-        if os.path.exists(config_path):
-            with open(config_path, 'r') as f:
-                config = json.load(f)
-                db_config = config.get('database', {})
-                if db_config:
-                    # Merge with defaults
-                    merged_config = DEFAULT_DB_CONFIG.copy()
-                    merged_config.update(db_config)
-                    return merged_config
+        merged_config = DEFAULT_DB_CONFIG.copy()
+        
+        # Load from env vars if present
+        if os.environ.get('DB_HOST'): merged_config['host'] = os.environ.get('DB_HOST')
+        if os.environ.get('DB_PORT'): merged_config['port'] = int(os.environ.get('DB_PORT'))
+        if os.environ.get('DB_USER'): merged_config['user'] = os.environ.get('DB_USER')
+        if os.environ.get('DB_PASSWORD') is not None: merged_config['password'] = os.environ.get('DB_PASSWORD')
+        if os.environ.get('DB_NAME'): merged_config['database'] = os.environ.get('DB_NAME')
+        
+        return merged_config
     except Exception as e:
-        print(f"Warning: Could not load database config from config.json: {e}")
+        print(f"Warning: Could not load database config from Environment: {e}")
     
     return DEFAULT_DB_CONFIG.copy()
 
@@ -330,6 +330,6 @@ if __name__ == "__main__":
         print("❌ Connection failed!")
         print("\nPlease ensure:")
         print("1. XAMPP MySQL is running")
-        print("2. Database 'anpr_system' exists (or update config.json)")
-        print("3. User credentials are correct in config.json")
+        print("2. Database 'anpr_system' exists")
+        print("3. User credentials are correct in environment variables")
 

@@ -2240,7 +2240,7 @@ def main():
         return
 
     if config.get('system_mode') != 'multi_camera':
-        print("❌ Configuration is not set for multi-camera mode. Please update config.json")
+        print("❌ Configuration is not set for multi-camera mode. Please update Database settings")
         return
 
     # Check for headless mode (use global HEADLESS_MODE which auto-detected display)

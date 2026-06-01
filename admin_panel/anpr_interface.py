@@ -17,7 +17,7 @@ class ANPRInterface:
     """Interface for ANPR system communication and control"""
     
     def __init__(self):
-        self.config_path = '../config.json'
+        self.config_path = None # Removed file based config
         self.allowed_plates_path = '../allowed_plates.json'
         self.detections_path = '../plate_detections.csv'
         self.service_name = 'anpr-multi-camera-temp'
