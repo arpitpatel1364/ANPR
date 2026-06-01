@@ -219,7 +219,7 @@ def predict_plate(model, image, device='cpu'):
     
     img_tensor = torch.from_numpy(img).unsqueeze(0).to(device)
     
-    with torch.no_grad():
+    with torch.inference_mode():
         preds = model(img_tensor)
     
     beam_search_enabled = True

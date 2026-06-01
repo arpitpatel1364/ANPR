@@ -8,7 +8,40 @@ import queue
 from db_connection import get_connection, DatabaseConnection, execute_query, initialize_database
 
 
-_PLATE_CACHE = {}         # { plate: (is_allowed, timestamp) }
+from collections import OrderedDict
+
+class BoundedLRUCache:
+    def __init__(self, maxsize=5000):
+        self._cache = OrderedDict()
+        self._maxsize = maxsize
+
+    def __contains__(self, key):
+        return key in self._cache
+
+    def __getitem__(self, key):
+        self._cache.move_to_end(key)
+        return self._cache[key]
+
+    def __setitem__(self, key, value):
+        if key in self._cache:
+            self._cache.move_to_end(key)
+        self._cache[key] = value
+        if len(self._cache) > self._maxsize:
+            self._cache.popitem(last=False)  # evict oldest
+
+    def get(self, key, default=None):
+        if key not in self._cache:
+            return default
+        self._cache.move_to_end(key)
+        return self._cache[key]
+
+    def set(self, key, value):
+        self[key] = value
+
+    def __len__(self):
+        return len(self._cache)
+
+_PLATE_CACHE = BoundedLRUCache(maxsize=5000)         # { plate: (is_allowed, timestamp) }
 _CACHE_TTL = 30           # seconds
 _cache_lock = threading.Lock()
 
@@ -36,9 +69,6 @@ def is_plate_allowed(plate: str) -> bool:
         # Update cache
         with _cache_lock:
             _PLATE_CACHE[clean_plate] = (is_allowed, current_time)
-            if len(_PLATE_CACHE) > 10000:
-                import logging
-                logging.warning(f"Plate cache size ({len(_PLATE_CACHE)}) exceeded 10,000 entries!")
         
         return is_allowed
     except Exception as e:
@@ -67,7 +97,7 @@ class PlateLogger:
         self.recent_detections = OrderedDict()  # plate -> (timestamp, confidence, count)
         
         # Async Database worker
-        self.db_queue = queue.Queue()
+        self.db_queue = queue.Queue(maxsize=100)
         self.db_worker_thread = threading.Thread(target=self._database_worker, daemon=True)
         self.db_worker_thread.start()
         
@@ -82,6 +112,7 @@ class PlateLogger:
         
     def _database_worker(self):
         """Dedicated background thread to handle database writes asynchronously in batches of up to 10 records"""
+        import logging
         while True:
             try:
                 tasks = []
@@ -105,20 +136,26 @@ class PlateLogger:
                     query = tasks[0][0]  # Standard insert query
                     params_list = [t[1] for t in tasks]
                     
-                    with DatabaseConnection() as db:
+                    success = False
+                    for attempt in range(3):
                         try:
-                            # executemany to reduce connection overhead and locks
-                            db.cursor.executemany(query, params_list)
-                            db.connection.commit()
+                            with DatabaseConnection() as db:
+                                # executemany to reduce connection overhead and locks
+                                db.cursor.executemany(query, params_list)
+                                db.connection.commit()
+                            success = True
                             for t in tasks:
                                 _, _, clean_plate, status_icon, verification_status, access_granted, reason = t
                                 print(f"{status_icon} Plate {clean_plate}: {verification_status} - Access: {access_granted} - LOGGED ({reason}) (batch size {len(tasks)})")
+                            break
                         except Exception as e:
-                            print(f"❌ Error logging detection batch to database (async): {e}")
-                            db.connection.rollback()
-                            for t in tasks:
-                                _, _, clean_plate, status_icon, verification_status, access_granted, reason = t
-                                print(f"{status_icon} Plate {clean_plate}: {verification_status} - Access: {access_granted} - LOGGED (but DB error) (batch size {len(tasks)})")
+                            logging.error(f"[DB] Write failed attempt {attempt+1}: {e}")
+                            time.sleep(1 * (attempt + 1))   # 1s, 2s, 3s
+                    
+                    if not success:
+                        for t in tasks:
+                            _, _, clean_plate, status_icon, verification_status, access_granted, reason = t
+                            print(f"{status_icon} Plate {clean_plate}: {verification_status} - Access: {access_granted} - LOGGED (but DB error) (batch size {len(tasks)})")
                     
                     for _ in tasks:
                         self.db_queue.task_done()
@@ -335,11 +372,24 @@ class PlateLogger:
                         bbox_y2
                     )
                     
-                    self.db_queue.put((
-                        query, params, clean_plate, status_icon, 
-                        verification['verification_status'], 
-                        verification['access_granted'], reason
-                    ))
+                    try:
+                        self.db_queue.put_nowait((
+                            query, params, clean_plate, status_icon, 
+                            verification['verification_status'], 
+                            verification['access_granted'], reason
+                        ))
+                    except queue.Full:
+                        import logging
+                        logging.warning("[PlateLogger] Queue full — dropping oldest entry.")
+                        try:
+                            self.db_queue.get_nowait()           # discard oldest
+                            self.db_queue.put_nowait((
+                                query, params, clean_plate, status_icon, 
+                                verification['verification_status'], 
+                                verification['access_granted'], reason
+                            )) # insert newest
+                        except queue.Empty:
+                            pass
                 except Exception as e:
                     print(f"❌ Error queuing detection to database: {e}")
             else:
