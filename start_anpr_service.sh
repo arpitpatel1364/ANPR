@@ -32,12 +32,7 @@ log() {
 
 log "Starting ANPR Multi-Camera Service..."
 
-# Check if config.json exists
-if [ ! -f "config.json" ]; then
-    log "ERROR: config.json not found!"
-    exit 1
-fi
-
+# Config is now loaded from database
 # Check if model file exists
 if [ ! -f "ANPR_ver15.pt" ]; then
     log "ERROR: ANPR_ver15.pt model file not found!"

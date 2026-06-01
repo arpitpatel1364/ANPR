@@ -323,10 +323,10 @@
                                     
                                     {% if ann and x1 is not none and y1 is not none %}
                                     <div class="dynamic-crop-container shadow-sm" data-src="{{ ann }}" data-x1="{{ x1 }}" data-y1="{{ y1 }}" data-x2="{{ x2 }}" data-y2="{{ y2 }}" style="width:70px;height:40px;border-radius:6px;overflow:hidden;position:relative;cursor:pointer;background:#f0f0f0;" onclick="showImagePreview('{{ ann }}', 'Annotated Frame')" title="Click to view full frame">
-                                        <img src="{{ thumb }}" style="position:absolute;visibility:hidden;">
+                                        <img src="{{ ann }}" style="position:absolute;visibility:hidden;">
                                     </div>
                                     {% elif ann %}
-                                    <img src="{{ thumb }}" alt="Annotated" loading="lazy" style="width:70px;height:40px;object-fit:cover;border-radius:6px;cursor:pointer;" onclick="showImagePreview('{{ ann }}', 'Annotated Frame')">
+                                    <img src="{{ ann }}" alt="Annotated" loading="lazy" style="width:70px;height:40px;object-fit:cover;border-radius:6px;cursor:pointer;" onclick="showImagePreview('{{ ann }}', 'Annotated Frame')">
                                     {% else %}
                                     <i class="bi bi-image text-muted"></i>
                                     {% endif %}
@@ -360,6 +360,8 @@ function showImagePreview(imageUrl, title) {
     document.body.appendChild(overlay);
 }
 
+const _dashImgDimCache = new Map();
+
 function processDynamicCrops() {
     const containers = document.querySelectorAll('.dynamic-crop-container:not(.processed)');
     containers.forEach(container => {
@@ -375,9 +377,8 @@ function processDynamicCrops() {
 
         const cw = container.clientWidth || 70;
         const ch = container.clientHeight || 40;
-        
-        const tempImg = new Image();
-        tempImg.onload = function() {
+
+        function applyDimensions(naturalW, naturalH) {
             const w = x2 - x1;
             const h = y2 - y1;
             const padX = w * 0.2;
@@ -385,8 +386,8 @@ function processDynamicCrops() {
             
             const cropX = Math.max(0, x1 - padX);
             const cropY = Math.max(0, y1 - padY);
-            const cropW = Math.min(tempImg.width - cropX, w + padX * 2);
-            const cropH = Math.min(tempImg.height - cropY, h + padY * 2);
+            const cropW = Math.min(naturalW - cropX, w + padX * 2);
+            const cropH = Math.min(naturalH - cropY, h + padY * 2);
             
             const scale = Math.max(cw / cropW, ch / cropH);
             
@@ -395,13 +396,25 @@ function processDynamicCrops() {
             const offsetX = (cw - displayW) / 2;
             const offsetY = (ch - displayH) / 2;
             
-            img.style.width = `${tempImg.width * scale}px`;
-            img.style.height = `${tempImg.height * scale}px`;
+            img.style.width = `${naturalW * scale}px`;
+            img.style.height = `${naturalH * scale}px`;
             img.style.left = `${offsetX - (cropX * scale)}px`;
             img.style.top = `${offsetY - (cropY * scale)}px`;
             img.style.visibility = 'visible';
-        };
-        tempImg.src = src + (src.includes('?') ? '&' : '?') + 't=' + Date.now();
+        }
+
+        if (_dashImgDimCache.has(src)) {
+            const [w, h] = _dashImgDimCache.get(src);
+            applyDimensions(w, h);
+        } else {
+            const tempImg = new Image();
+            tempImg.onload = function() {
+                _dashImgDimCache.set(src, [tempImg.naturalWidth, tempImg.naturalHeight]);
+                applyDimensions(tempImg.naturalWidth, tempImg.naturalHeight);
+            };
+            img.src = src;
+            tempImg.src = src;
+        }
     });
 }
 

@@ -182,6 +182,93 @@ def detections():
                          date_to=date_to,
                          cameras=cameras)
 
+@detection_bp.route('/api/detections/data')
+def detections_data_api():
+    """JSON API endpoint for applyFilters() — returns detection data as JSON."""
+    page = int(request.args.get('page', 1))
+    per_page = int(request.args.get('per_page', 20))
+    search = request.args.get('search', '').strip()
+    status_filter = request.args.get('status', 'VERIFIED').strip()
+    query_status = '' if status_filter == 'all' else status_filter
+    camera_filter = request.args.get('camera', '').strip()
+    date_from = request.args.get('date_from', '').strip()
+    date_to = request.args.get('date_to', '').strip()
+
+    try:
+        with DatabaseConnection() as db:
+            where_clauses = []
+            params = []
+
+            if search:
+                where_clauses.append("license_plate LIKE %s")
+                params.append(f"%{search}%")
+            if query_status:
+                where_clauses.append("verification_status = %s")
+                params.append(query_status)
+            if camera_filter:
+                where_clauses.append("camera_source LIKE %s")
+                params.append(f"%{camera_filter}%")
+            if date_from:
+                where_clauses.append("DATE(timestamp) >= %s")
+                params.append(date_from)
+            if date_to:
+                where_clauses.append("DATE(timestamp) <= %s")
+                params.append(date_to)
+
+            where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
+
+            count_query = f"SELECT COUNT(*) as count FROM detections WHERE {where_sql}"
+            db.execute(count_query, tuple(params) if params else None)
+            result = db.fetchone()
+            total_count = result['count'] if result else 0
+
+            offset = (page - 1) * per_page
+            query = f"""
+                SELECT id, timestamp, license_plate, verification_status, access_granted,
+                       detection_confidence, camera_source, image_full_annotated,
+                       bbox_x1, bbox_y1, bbox_x2, bbox_y2
+                FROM detections
+                WHERE {where_sql}
+                ORDER BY timestamp DESC
+                LIMIT %s OFFSET %s
+            """
+            params.extend([per_page, offset])
+            db.execute(query, tuple(params))
+            rows = db.fetchall()
+
+            detections = []
+            for row in rows:
+                detections.append({
+                    'id': row['id'],
+                    'Timestamp': row['timestamp'].strftime('%Y-%m-%d %H:%M:%S') if row['timestamp'] else '',
+                    'timestamp_raw': row['timestamp'].isoformat() if row['timestamp'] else '',
+                    'License_Plate': row['license_plate'] or '',
+                    'Verification_Status': row['verification_status'] or '',
+                    'Access_Granted': row['access_granted'] or 'NO',
+                    'Detection_Confidence': f"{row['detection_confidence']:.1f}" if row['detection_confidence'] else '',
+                    'Camera_Source': row['camera_source'] or '',
+                    'Image_Full_Annotated': row['image_full_annotated'] or '',
+                    'bbox_x1': row['bbox_x1'],
+                    'bbox_y1': row['bbox_y1'],
+                    'bbox_x2': row['bbox_x2'],
+                    'bbox_y2': row['bbox_y2'],
+                })
+
+            total_pages = max(1, (total_count + per_page - 1) // per_page)
+
+        return jsonify({
+            'success': True,
+            'detections': detections,
+            'total_count': total_count,
+            'total_pages': total_pages,
+            'current_page': page,
+            'per_page': per_page,
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e), 'detections': [], 'total_count': 0,
+                        'total_pages': 0, 'current_page': page, 'per_page': per_page}), 500
+
+
 @detection_bp.route('/detections/export')
 def export_detections():
     """Export detections to CSV"""

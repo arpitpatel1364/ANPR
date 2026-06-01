@@ -495,34 +495,27 @@ function changePerPage(value) {
     applyFilters(1);
 }
 
-// Status filter change handler - AJAX refresh
 function applyFilters(page = 1) {
     const form = document.getElementById('filterForm');
     const formData = new FormData(form);
     formData.set('page', page);
     const params = new URLSearchParams(formData);
-    
-    // Show loading state on detections content
+
+    // Show loading state
     const detectionsContent = document.getElementById('detections-content');
-    const detectionsWrapper = document.getElementById('detections-wrapper');
     if (detectionsContent) {
         detectionsContent.style.opacity = '0.6';
         detectionsContent.style.pointerEvents = 'none';
     }
-    
-    return fetch(`/detections?${params}`)
-        .then(response => response.text())
-        .then(html => {
-            // Extract just the detections-content div from the response
-            const parser = new DOMParser();
-            const doc = parser.parseFromString(html, 'text/html');
-            const newContent = doc.querySelector('#detections-content');
-            
-            if (newContent && detectionsContent) {
-                // Replace only the table content, not the whole card-body
-                detectionsContent.innerHTML = newContent.innerHTML;
-                processDynamicCrops();
+
+    return fetch(`/api/detections/data?${params}`)
+        .then(response => response.json())
+        .then(data => {
+            if (!data.success) {
+                console.error('Error loading detections:', data.error);
+                return;
             }
+            renderDetectionsTable(data);
         })
         .catch(error => {
             console.error('Error loading detections:', error);
@@ -534,6 +527,124 @@ function applyFilters(page = 1) {
                 detectionsContent.style.pointerEvents = 'auto';
             }
         });
+}
+
+function renderDetectionsTable(data) {
+    const detectionsContent = document.getElementById('detections-content');
+    if (!detectionsContent) return;
+
+    if (!data.detections || data.detections.length === 0) {
+        detectionsContent.innerHTML = `
+            <div class="text-center py-5">
+                <i class="bi bi-inbox display-4 text-muted"></i>
+                <p class="text-muted mt-3">No detections found matching your criteria.</p>
+                <button class="btn btn-outline-primary" onclick="clearFilters()">
+                    <i class="bi bi-x-circle me-1"></i>Clear Filters
+                </button>
+            </div>`;
+        return;
+    }
+
+    let rowsHtml = '';
+    const startIndex = (data.current_page - 1) * data.per_page;
+    data.detections.forEach((d, i) => {
+        const rowNum = startIndex + i + 1;
+        const ts = d.Timestamp || '-';
+        const plate = d.License_Plate || '-';
+        const status = d.Verification_Status || '-';
+        const access = d.Access_Granted || 'NO';
+        const conf = d.Detection_Confidence ? d.Detection_Confidence + '%' : '-';
+        const camera = d.Camera_Source || '-';
+        const ann = d.Image_Full_Annotated || '';
+        const x1 = d.bbox_x1, y1 = d.bbox_y1, x2 = d.bbox_x2, y2 = d.bbox_y2;
+        const statusBg = status === 'VERIFIED' ? 'success' : 'warning';
+        const accessBg = access === 'YES' ? 'success' : 'danger';
+
+        let imgHtml = '<i class="bi bi-image text-muted"></i>';
+        if (ann && x1 != null && y1 != null) {
+            imgHtml = `<div class="dynamic-crop-container shadow-sm" data-src="${ann}" data-x1="${x1}" data-y1="${y1}" data-x2="${x2}" data-y2="${y2}" style="width:60px;height:35px;border-radius:4px;overflow:hidden;position:relative;background:#f0f0f0;cursor:pointer;" onclick="previewImage('${ann}')" title="Click to view full image"><img src="${ann}" style="position:absolute;visibility:hidden;"></div>`;
+        } else if (ann) {
+            imgHtml = `<img src="${ann}" alt="Annotated" loading="lazy" style="width:60px;height:35px;object-fit:cover;border-radius:4px;cursor:pointer;" onclick="previewImage('${ann}')">`;
+        }
+
+        // Serialize detection for the view-details button (no inline object literal)
+        const detectionJson = JSON.stringify(d).replace(/'/g, '&#39;');
+
+        rowsHtml += `
+            <tr>
+                <td>${rowNum}</td>
+                <td><small class="text-muted">${ts}</small></td>
+                <td>${imgHtml}</td>
+                <td><span class="fw-bold text-primary">${plate}</span></td>
+                <td><span class="badge badge-modern bg-${statusBg}-gradient">${status}</span></td>
+                <td><span class="badge badge-modern bg-${accessBg}-gradient">${access}</span></td>
+                <td><span class="badge badge-modern bg-info-gradient">${conf}</span></td>
+                <td><small class="text-muted">${camera}</small></td>
+                <td>
+                    <div class="btn-group btn-group-sm">
+                        <button class="btn btn-outline-primary btn-modern btn-modern-enhanced" data-detection='${detectionJson}' onclick="viewDetailsFromButton(this)" title="View Details">
+                            <i class="bi bi-eye"></i>
+                        </button>
+                        <button class="btn btn-outline-danger btn-modern btn-modern-enhanced" onclick="deleteDetection('${d.id}')" title="Delete Detection">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                    </div>
+                </td>
+            </tr>`;
+    });
+
+    // Build pagination
+    let paginationHtml = '';
+    if (data.total_pages > 1) {
+        const cp = data.current_page, tp = data.total_pages;
+        let pageLinks = '';
+        for (let p = 1; p <= tp; p++) {
+            if (p === cp) {
+                pageLinks += `<li class="page-item active"><span class="page-link">${p}</span></li>`;
+            } else if (p <= 3 || p > tp - 3 || (p >= cp - 1 && p <= cp + 1)) {
+                pageLinks += `<li class="page-item"><a class="page-link" href="#" onclick="goToPage(${p}); return false;">${p}</a></li>`;
+            } else if (p === 4 && cp > 5) {
+                pageLinks += `<li class="page-item disabled"><span class="page-link">...</span></li>`;
+            } else if (p === tp - 3 && cp < tp - 4) {
+                pageLinks += `<li class="page-item disabled"><span class="page-link">...</span></li>`;
+            }
+        }
+        paginationHtml = `
+            <nav aria-label="Detection pagination">
+                <ul class="pagination justify-content-center">
+                    <li class="page-item ${cp === 1 ? 'disabled' : ''}">
+                        ${cp > 1 ? `<a class="page-link" href="#" onclick="goToPage(${cp - 1}); return false;"><i class="bi bi-chevron-left"></i></a>` : `<span class="page-link"><i class="bi bi-chevron-left"></i></span>`}
+                    </li>
+                    ${pageLinks}
+                    <li class="page-item ${cp === tp ? 'disabled' : ''}">
+                        ${cp < tp ? `<a class="page-link" href="#" onclick="goToPage(${cp + 1}); return false;"><i class="bi bi-chevron-right"></i></a>` : `<span class="page-link"><i class="bi bi-chevron-right"></i></span>`}
+                    </li>
+                </ul>
+            </nav>`;
+    }
+
+    detectionsContent.innerHTML = `
+        <div class="table-responsive">
+            <table class="table table-modern table-hover">
+                <thead>
+                    <tr>
+                        <th width="5%">#</th>
+                        <th width="12%">Timestamp</th>
+                        <th width="8%">Plate</th>
+                        <th width="15%">License Plate</th>
+                        <th width="10%">Status</th>
+                        <th width="10%">Access</th>
+                        <th width="10%">Confidence</th>
+                        <th width="15%">Camera</th>
+                        <th width="10%">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>${rowsHtml}</tbody>
+            </table>
+        </div>
+        ${paginationHtml}`;
+
+    processDynamicCrops();
 }
 
 // Pagination via AJAX
@@ -700,6 +811,8 @@ function deleteDetection(index) {
     new bootstrap.Modal(document.getElementById('deleteModal')).show();
 }
 
+const _imgDimCache = new Map();
+
 function processDynamicCrops() {
     const containers = document.querySelectorAll('.dynamic-crop-container:not(.processed)');
     containers.forEach(container => {
@@ -715,9 +828,8 @@ function processDynamicCrops() {
 
         const cw = container.clientWidth || 60;
         const ch = container.clientHeight || 35;
-        
-        const tempImg = new Image();
-        tempImg.onload = function() {
+
+        function applyDimensions(naturalW, naturalH) {
             const w = x2 - x1;
             const h = y2 - y1;
             const padX = w * 0.2;
@@ -725,8 +837,8 @@ function processDynamicCrops() {
             
             const cropX = Math.max(0, x1 - padX);
             const cropY = Math.max(0, y1 - padY);
-            const cropW = Math.min(tempImg.width - cropX, w + padX * 2);
-            const cropH = Math.min(tempImg.height - cropY, h + padY * 2);
+            const cropW = Math.min(naturalW - cropX, w + padX * 2);
+            const cropH = Math.min(naturalH - cropY, h + padY * 2);
             
             const scale = Math.max(cw / cropW, ch / cropH);
             
@@ -735,13 +847,25 @@ function processDynamicCrops() {
             const offsetX = (cw - displayW) / 2;
             const offsetY = (ch - displayH) / 2;
             
-            img.style.width = `${tempImg.width * scale}px`;
-            img.style.height = `${tempImg.height * scale}px`;
+            img.style.width = `${naturalW * scale}px`;
+            img.style.height = `${naturalH * scale}px`;
             img.style.left = `${offsetX - (cropX * scale)}px`;
             img.style.top = `${offsetY - (cropY * scale)}px`;
             img.style.visibility = 'visible';
-        };
-        tempImg.src = src + (src.includes('?') ? '&' : '?') + 't=' + Date.now();
+        }
+
+        if (_imgDimCache.has(src)) {
+            const [w, h] = _imgDimCache.get(src);
+            applyDimensions(w, h);
+        } else {
+            const tempImg = new Image();
+            tempImg.onload = function() {
+                _imgDimCache.set(src, [tempImg.naturalWidth, tempImg.naturalHeight]);
+                applyDimensions(tempImg.naturalWidth, tempImg.naturalHeight);
+            };
+            img.src = src;
+            tempImg.src = src;
+        }
     });
 }
 

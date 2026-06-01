@@ -1,5 +1,8 @@
 // ANPR Admin Panel - JavaScript Functions
 
+const DEBUG = false;
+function log(...args) { if (DEBUG) console.log(...args); }
+
 // Global variables
 let refreshInterval;
 let lastDetectionTimestamp = null; // Track last detection to avoid duplicate notifications
@@ -79,7 +82,7 @@ function initializeWebSocket() {
         
         // Connection event handlers
         socket.on('connect', function() {
-            console.log('✅ Connected to ANPR Admin Panel WebSocket');
+            log('✅ Connected to ANPR Admin Panel WebSocket');
             reconnectAttempts = 0;
             lastConnectionTime = Date.now();
             updateConnectionStatus('connected', 'Connected');
@@ -100,7 +103,7 @@ function initializeWebSocket() {
         });
         
         socket.on('disconnect', function(reason) {
-            console.log('❌ Disconnected from ANPR Admin Panel WebSocket. Reason:', reason);
+            log('❌ Disconnected from ANPR Admin Panel WebSocket. Reason:', reason);
             updateConnectionStatus('disconnected', 'Disconnected');
             
             // Stop health check
@@ -124,13 +127,13 @@ function initializeWebSocket() {
         });
         
         socket.on('reconnect', function(attemptNumber) {
-            console.log('🔄 Reconnected after', attemptNumber, 'attempts');
+            log('🔄 Reconnected after', attemptNumber, 'attempts');
             updateConnectionStatus('connected', 'Reconnected');
             showNotification('Connection restored!', 'success');
         });
         
         socket.on('reconnect_attempt', function(attemptNumber) {
-            console.log('🔄 Reconnection attempt', attemptNumber);
+            log('🔄 Reconnection attempt', attemptNumber);
             updateConnectionStatus('connecting', `Reconnecting... (${attemptNumber})`);
         });
         
@@ -150,24 +153,29 @@ function initializeWebSocket() {
             if (data.error) {
                 console.warn('Health check error:', data.error);
             } else {
-                console.log('🏓 Pong received:', data);
+               
+                log('🏓 Pong received:', data);
             }
         });
         
         // Real-time update handlers
         socket.on('new_detections', function(data) {
+            log('New detections:', data);
             updateDetectionFeed(data);
         });
         
         socket.on('detection_update', function(data) {
+            log('Latest detection data:', data);
             updateDetectionStats(data);
         });
         
         socket.on('system_status', function(data) {
+            log('System status update:', data);
             updateSystemStatus(data);
         });
         
         socket.on('camera_status', function(data) {
+            log('Camera status update:', data);
             updateCameraStatus(data);
         });
         
@@ -554,12 +562,26 @@ function updateCameraStatus(data) {
         cameraStatusCountElement.textContent = `${enabledCount}/${totalCount} Enabled | ${activeCount} Connected`;
     }
     
+   
+    // Look up cameraElements[camera.id] instead of querying the DOM on every WebSocket push.
+    const cameraElements = {};
+    document.querySelectorAll('[data-camera-id]').forEach(el => {
+        const id = el.dataset.cameraId;
+        cameraElements[id] = {
+            root:        el,
+            badge:       el.querySelector('.camera-status-badge'),
+            indicator:   el.querySelector('.camera-status-indicator'),
+            lastChecked: el.querySelector('.camera-last-checked')
+        };
+    });
+
     // Update camera status indicators with enhanced information
     data.cameras.forEach(camera => {
-        const cameraElement = document.querySelector(`[data-camera-id="${camera.id}"]`);
-        if (cameraElement) {
+        const cached = cameraElements[camera.id];
+        if (!cached) return;
+        const cameraElement = cached.root;
             // Update status badge with connection status
-            const statusBadge = cameraElement.querySelector('.camera-status-badge');
+            const statusBadge = cached.badge;
             if (statusBadge) {
                 const connectionStatus = camera.connection_status || 'unknown';
                 const quality = camera.connection_quality || 'unknown';
@@ -584,7 +606,7 @@ function updateCameraStatus(data) {
             }
             
             // Update status indicator dot with connection quality
-            const statusIndicator = cameraElement.querySelector('.camera-status-indicator');
+            const statusIndicator = cached.indicator;
             if (statusIndicator) {
                 const connectionStatus = camera.connection_status || 'unknown';
                 const quality = camera.connection_quality || 'unknown';
@@ -609,11 +631,11 @@ function updateCameraStatus(data) {
             }
             
             // Update last checked time
-            const lastCheckedElement = cameraElement.querySelector('.camera-last-checked');
+            const lastCheckedElement = cached.lastChecked;
             if (lastCheckedElement && camera.last_checked) {
                 lastCheckedElement.textContent = `Last checked: ${formatTimestamp(camera.last_checked)}`;
             }
-        }
+       
     });
     
     // Don't add to activity feed to reduce spam
@@ -639,13 +661,9 @@ function handleCameraToggleResult(data) {
         showNotification(data.message, 'success');
         addActivityItem('Camera Control', data.message, 'camera-video', 'success');
         
-        // Refresh page data immediately after successful operation
+        // Refresh page data after successful operation
         refreshPageData();
-        
-        // Force page reload after 1.5 seconds to ensure data is updated
-        setTimeout(() => {
-            location.reload();
-        }, 1500);
+       
     } else {
         // Revert UI changes on failure
         if (cameraElement) {
@@ -670,13 +688,9 @@ function handleCameraTestResult(data) {
         showNotification(data.message, 'success');
         addActivityItem('Camera Test', data.message, 'wifi', 'success');
         
-        // Refresh page data immediately after successful test
+        // Refresh page data after successful test
         refreshPageData();
-        
-        // Force page reload after 1.5 seconds to ensure data is updated
-        setTimeout(() => {
-            location.reload();
-        }, 1500);
+       
     } else {
         showNotification(data.message || 'Camera test failed', 'error');
         addActivityItem('Camera Test', data.message || 'Camera test failed', 'wifi', 'error');
@@ -756,11 +770,7 @@ function toggleCameraLive(cameraId, enabled) {
         }
         showNotification('WebSocket not connected. Please refresh the page.', 'error');
         console.error('WebSocket not connected for camera toggle');
-        
-        // Force page reload to ensure data is updated
-        setTimeout(() => {
-            location.reload();
-        }, 2000);
+       
     }
 }
 
@@ -861,11 +871,7 @@ function testCameraHttp(cameraId, buttonElement) {
         if (cameraElement) {
             cameraElement.classList.remove('testing');
         }
-        
-        // Force page reload to ensure data is updated
-        setTimeout(() => {
-            location.reload();
-        }, 2000);
+       
     });
 }
 
@@ -1241,16 +1247,8 @@ function initializeLiveFeedToggle() {
 // Periodic refresh for fallback mode
 
 function startPeriodicRefresh() {
-    if (refreshInterval) {
-        clearInterval(refreshInterval);
-    }
-    
-    // Refresh every 10 seconds
-    refreshInterval = setInterval(() => {
-        refreshDataViaAPI();
-    }, 10000);
-    
-    console.log('Periodic refresh started');
+   
+    // The 30s dashboardRefreshInterval (startRealTimeUpdates) acts as the offline fallback.
 }
 
 function stopPeriodicRefresh() {
@@ -1258,7 +1256,6 @@ function stopPeriodicRefresh() {
         clearInterval(refreshInterval);
         refreshInterval = null;
     }
-    console.log('Periodic refresh stopped');
 }
 
 // Load initial data on page load
@@ -1497,20 +1494,49 @@ function checkSessionValidity() {
 }
 
 function warnSessionExpiry() {
-    // Show warning 5 minutes before session expires
-    if (confirm('Your session will expire in 5 minutes. Do you want to stay logged in?')) {
-        // Refresh session by making a request
-        fetch('/check-session')
-            .then(response => response.json())
-            .then(data => {
-                if (data.valid) {
-                    // Session refreshed
-                    console.log('Session refreshed');
-                } else {
-                    window.location.href = '/login';
-                }
-            });
+   
+    // confirm() freezes the JS event loop including WebSocket delivery.
+    const modalId = 'sessionExpiryModal';
+    let existingModal = document.getElementById(modalId);
+    if (!existingModal) {
+        const modalHtml = `
+        <div class="modal fade" id="${modalId}" tabindex="-1" data-bs-backdrop="static">
+            <div class="modal-dialog">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title"><i class="bi bi-clock me-2"></i>Session Expiring Soon</h5>
+                    </div>
+                    <div class="modal-body">
+                        Your session will expire in 5 minutes. Do you want to stay logged in?
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" id="sessionLogoutBtn">Log Out</button>
+                        <button type="button" class="btn btn-primary" id="sessionStayBtn">Stay Logged In</button>
+                    </div>
+                </div>
+            </div>
+        </div>`;
+        document.body.insertAdjacentHTML('beforeend', modalHtml);
+        existingModal = document.getElementById(modalId);
+
+        document.getElementById('sessionStayBtn').addEventListener('click', function() {
+            bootstrap.Modal.getInstance(existingModal).hide();
+            // Refresh session by pinging the check-session endpoint
+            fetch('/check-session')
+                .then(response => response.json())
+                .then(data => {
+                    if (!data.valid) { window.location.href = '/login'; }
+                })
+                .catch(() => { window.location.href = '/login'; });
+        });
+
+        document.getElementById('sessionLogoutBtn').addEventListener('click', function() {
+            bootstrap.Modal.getInstance(existingModal).hide();
+            window.location.href = '/login';
+        });
     }
+
+    new bootstrap.Modal(existingModal).show();
 }
 
 // Initialize admin panel
@@ -1542,8 +1568,7 @@ function initializeAdminPanel() {
     // Initialize form validations
     initializeFormValidations();
     
-    // Initialize animations
-    initializeAnimations();
+   
     
     // Initialize smooth scrolling
     initializeSmoothScrolling();
@@ -1635,9 +1660,14 @@ function initializeRealTimeUpdates() {
 let dashboardRefreshInterval;
 
 function startRealTimeUpdates() {
+   
+   
     dashboardRefreshInterval = setInterval(() => {
-        updateDashboardStats();
-    }, 30000); // Update every 30 seconds
+        if (document.visibilityState === 'hidden') return;
+        if (typeof socket === 'undefined' || !socket || !socket.connected) {
+            updateDashboardStats();
+        }
+    }, 30000); // 30-second offline fallback
 }
 
 // Stop real-time updates
@@ -1646,6 +1676,17 @@ function stopRealTimeUpdates() {
         clearInterval(dashboardRefreshInterval);
     }
 }
+
+document.addEventListener('visibilitychange', function() {
+    if (document.visibilityState === 'hidden') {
+        stopRealTimeUpdates();
+    } else {
+        // Tab is visible again — restart fallback timer if on dashboard.
+        if (window.location.pathname === '/' || window.location.pathname === '/dashboard') {
+            startRealTimeUpdates();
+        }
+    }
+});
 
 // Update dashboard statistics
 function updateDashboardStats() {
@@ -1668,18 +1709,13 @@ function updateDashboardStats() {
     });
 }
 
-// Update element with animation
+// Update element (animation removed for low-end device performance)
 function updateElement(id, value) {
     const element = document.getElementById(id);
     if (element) {
         const oldValue = element.textContent;
         if (oldValue !== value.toString()) {
-            element.style.transition = 'all 0.3s ease';
-            element.style.transform = 'scale(1.1)';
             element.textContent = value;
-            setTimeout(() => {
-                element.style.transform = 'scale(1)';
-            }, 300);
         }
     }
 }
@@ -1854,20 +1890,7 @@ function formatNumber(num) {
     return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 }
 
-// Debounce function
-function debounce(func, wait) {
-    let timeout;
-    return function executedFunction(...args) {
-        const later = () => {
-            clearTimeout(timeout);
-            func(...args);
-        };
-        clearTimeout(timeout);
-        timeout = setTimeout(later, wait);
-    };
-}
-
-// Throttle function
+// All callers use the leading-edge debounce defined at the top of this file.
 function throttle(func, limit) {
     let inThrottle;
     return function() {
@@ -2073,25 +2096,10 @@ function initializeCameraDropdowns() {
     });
 }
 
-// Initialize animations
+// Initialize animations — removed for low-end device performance
+// hover-lift, hover-scale, hover-glow classes are no longer added dynamically
 function initializeAnimations() {
-    // Add hover effects to interactive elements
-    const interactiveElements = document.querySelectorAll('.btn, .card, .nav-link');
-    interactiveElements.forEach(element => {
-        element.classList.add('hover-lift');
-    });
-    
-    // Add scale effect to buttons
-    const buttons = document.querySelectorAll('.btn');
-    buttons.forEach(button => {
-        button.classList.add('hover-scale');
-    });
-    
-    // Add glow effect to primary buttons
-    const primaryButtons = document.querySelectorAll('.btn-primary');
-    primaryButtons.forEach(button => {
-        button.classList.add('hover-glow');
-    });
+    // intentionally empty
 }
 
 // Search functionality
@@ -2171,8 +2179,8 @@ function showNotification(message, type, duration = 5000) {
         max-width: 400px;
         margin-bottom: 10px;
         pointer-events: auto;
-        transform: translateX(100%);
-        transition: transform 0.3s ease;
+        opacity: 0;
+        transition: opacity 0.15s ease;
     `;
     
     notification.innerHTML = `
@@ -2206,7 +2214,7 @@ function showNotification(message, type, duration = 5000) {
     
     // Animate in
     setTimeout(() => {
-        notification.style.transform = 'translateX(0)';
+        notification.style.opacity = '1';
     }, 10);
     
     // Auto-remove after duration
@@ -2217,7 +2225,6 @@ function showNotification(message, type, duration = 5000) {
 
 function removeNotificationFromStack(notification) {
     if (notification && notification.parentNode) {
-        notification.style.transform = 'translateX(100%)';
         notification.style.opacity = '0';
         setTimeout(() => {
             if (notification && notification.parentNode) {
@@ -2225,7 +2232,7 @@ function removeNotificationFromStack(notification) {
                 // Remove from stack
                 notificationStack = notificationStack.filter(n => n.element !== notification);
             }
-        }, 300);
+        }, 150);
     }
 }
 

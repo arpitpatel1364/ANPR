@@ -97,11 +97,9 @@ class ANPRSystemMonitor:
     def _check_camera_status(self):
         """Check camera connection status"""
         try:
-            config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'config.json')
-            if os.path.exists(config_path):
-                with open(config_path, 'r') as f:
-                    config = json.load(f)
-                
+            from scripts.config_db import load_config_from_db
+            config = load_config_from_db()
+            if config:
                 cameras = config.get('cameras', [])
                 new_camera_status = {}
                 for camera in cameras:
@@ -192,12 +190,10 @@ class ANPRSystemMonitor:
     def get_camera_stats(self) -> Dict[str, Any]:
         """Get camera statistics"""
         try:
-            config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'config.json')
-            if not os.path.exists(config_path):
+            from scripts.config_db import load_config_from_db
+            config = load_config_from_db()
+            if not config:
                 return {}
-            
-            with open(config_path, 'r') as f:
-                config = json.load(f)
             
             cameras = config.get('cameras', [])
             total_cameras = len(cameras)
