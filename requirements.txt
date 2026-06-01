@@ -22,6 +22,7 @@ Pillow>=8.0.0
 
 # Optional UI (for gradio interface if needed)
 gradio>=3.0.0
+psutil>=5.9.0
 
 # Additional dependencies for multi-camera and headless mode
 # (These are usually included with Python standard library)

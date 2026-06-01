@@ -321,10 +321,32 @@ def init_worker(yolo_path, lprnet_path):
     """
     Initializer function for the worker processes in the ProcessPoolExecutor.
     Loads the YOLO and LPRNet models exactly once per worker process.
+    Pins workers to specific CPU cores and sets nice level.
     """
     global worker_yolo, worker_lprnet, worker_device
     import sys
     import os
+    import psutil
+    
+    # CPU Affinity & process pinning (Section 1C)
+    try:
+        p = psutil.Process(os.getpid())
+        num_cores = psutil.cpu_count()
+        if num_cores > 2:
+            worker_cores = list(range(2, num_cores))
+            p.cpu_affinity(worker_cores)
+            p.nice(5)
+            print(f"📌 [Worker {os.getpid()}] Pinned to cores {worker_cores}, nice=5")
+        elif num_cores == 2:
+            p.cpu_affinity([1])
+            p.nice(5)
+            print(f"📌 [Worker {os.getpid()}] Pinned to core [1], nice=5")
+        else:
+            p.nice(5)
+            print(f"📌 [Worker {os.getpid()}] nice=5 set")
+    except Exception as e:
+        print(f"⚠️ CPU affinity/nice setting failed in worker {os.getpid()}: {e}")
+
     project_dir = os.path.dirname(os.path.abspath(__file__))
     if project_dir not in sys.path:
         sys.path.insert(0, project_dir)
@@ -365,31 +387,37 @@ def init_worker(yolo_path, lprnet_path):
     worker_yolo = YOLO(yolo_path)
     worker_yolo.to(worker_device)
     
-    # PyTorch CPU FP16 fallback (disabled on CPU as PyTorch CPU does not support FP16/Half Conv2d operations)
-    if worker_device == 'cuda' and avx2_supported:
-        try:
-            worker_yolo.model.half()
-            print("🚀 CUDA detected: YOLOv8 model half-precision (FP16) enabled")
-        except Exception as e:
-            print(f"⚠️ Failed to enable half precision: {e}")
+    # Running on CPU — FP16 half-precision is not supported on CPU
             
     print(f"✅ YOLOv8 loaded in worker process {os.getpid()}")
     
+    # Warm up YOLO model (Fix 3C)
+    try:
+        import numpy as np
+        with torch.inference_mode():
+            worker_yolo.predict(np.zeros((320, 320, 3), dtype=np.uint8), verbose=False)
+        print(f"✅ YOLOv8 warm-up complete in worker process {os.getpid()}")
+    except Exception as e:
+        print(f"⚠️ YOLOv8 warm-up failed: {e}")
+        
     print(f"🔄 Loading LPRNet model in worker process {os.getpid()}...")
     worker_lprnet = LPRNet(class_num=37, dropout_rate=0)
     worker_lprnet.load_state_dict(torch.load(lprnet_path, map_location=worker_device, weights_only=False))
     worker_lprnet.to(worker_device)
     worker_lprnet.eval()
     
-    # FP16 is disabled on CPU as PyTorch CPU does not support FP16/Half Conv2d operations
-    if worker_device == 'cuda' and avx2_supported:
-        try:
-            worker_lprnet.half()
-            print("🚀 CUDA detected: LPRNet half-precision (FP16) enabled")
-        except Exception as e:
-            print(f"⚠️ Failed to enable half precision for LPRNet: {e}")
+    # Running on CPU — FP16 half-precision is not supported on CPU
             
     print(f"✅ LPRNet loaded in worker process {os.getpid()}")
+
+    # Warm up LPRNet model (Fix 3C)
+    try:
+        dummy_lpr = torch.zeros(1, 3, 24, 94)
+        with torch.inference_mode():
+            worker_lprnet(dummy_lpr)
+        print(f"✅ LPRNet warm-up complete in worker process {os.getpid()}")
+    except Exception as e:
+        print(f"⚠️ LPRNet warm-up failed: {e}")
 
 
 def expand_roi(x1, y1, x2, y2, frame_h, frame_w, margin=0.07):
@@ -543,7 +571,8 @@ def worker_batch_inference(batch_inputs, inference_imgsz, confidence_threshold):
     valid_frames = [f for f in frames_for_detection if f is not None]
     if valid_frames:
         try:
-            yolo_results_batch = worker_yolo.predict(valid_frames, imgsz=inference_imgsz, verbose=False)
+            with torch.inference_mode():
+                yolo_results_batch = worker_yolo.predict(valid_frames, imgsz=inference_imgsz, verbose=False)
         except Exception as e:
             print(f"⚠️ YOLO batch inference error: {e}")
             
@@ -1316,11 +1345,16 @@ class CameraProcessor:
         - Drops frame on queue full (Section 2.2).
         - Executes low-overhead motion detection (Section 2.4) and skips inference.
         - Submits to global ProcessPoolExecutor when semaphore is free (Section 1.2).
+        - Automatically reconnects indefinitely with exponential backoff on stream loss.
         """
         global stop_processing, inference_executor, inference_semaphore
         
         # Initialize last_gray_frame for motion detection
         self.last_gray_frame = None
+        
+        reconnect_delay_base = 5.0
+        reconnect_delay_max = 60.0
+        delay = reconnect_delay_base
 
         while True:
             if stop_processing:
@@ -1330,153 +1364,203 @@ class CameraProcessor:
                 if self.stop_camera_flag:
                     break
 
+            # If cap is not initialized or not opened, try to connect/reconnect
+            if self.cap is None or not self.cap.isOpened():
+                if self.cap is not None:
+                    try:
+                        self.cap.release()
+                    except Exception:
+                        pass
+                    self.cap = None
+
+                if self.headless_mode:
+                    logging.warning(f"[{self.name}] Camera source not open. Connecting in {delay}s...")
+                else:
+                    print(f"⚠️ [{self.name}] Camera source not open. Connecting in {delay}s...")
+
+                # Wait with check for stop flags
+                slept = 0.0
+                while slept < delay:
+                    if stop_processing:
+                        break
+                    with self.stop_camera_lock:
+                        if self.stop_camera_flag:
+                            break
+                    time.sleep(0.5)
+                    slept += 0.5
+
+                if stop_processing:
+                    break
+                with self.stop_camera_lock:
+                    if self.stop_camera_flag:
+                        break
+
+                try:
+                    if isinstance(self.rtsp_source, int) or (isinstance(self.rtsp_source, str) and self.rtsp_source.isdigit()):
+                        self.cap = cv2.VideoCapture(int(self.rtsp_source))
+                    else:
+                        self.cap = cv2.VideoCapture(self.rtsp_source, cv2.CAP_FFMPEG)
+
+                    if self.cap and self.cap.isOpened():
+                        try:
+                            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                            self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('H', '2', '6', '4'))
+                        except Exception:
+                            pass
+                        delay = reconnect_delay_base  # reset backoff on success
+                        if self.headless_mode:
+                            logging.info(f"[{self.name}] Connected to stream: {self.rtsp_source}")
+                        else:
+                            print(f"✅ [{self.name}] Connected to stream: {self.rtsp_source}")
+                    else:
+                        delay = min(delay * 2, reconnect_delay_max)
+                        continue
+                except Exception as e:
+                    if self.headless_mode:
+                        logging.error(f"[{self.name}] Exception during connection: {e}")
+                    else:
+                        print(f"❌ [{self.name}] Exception during connection: {e}")
+                    delay = min(delay * 2, reconnect_delay_max)
+                    continue
+
             try:
-                if self.cap and self.cap.isOpened():
-                    self.frame_count += 1
-                    if PROCESS_EVERY_NTH_FRAME > 1 and self.frame_count % PROCESS_EVERY_NTH_FRAME != 0:
-                        self.cap.grab()
+                self.frame_count += 1
+                if PROCESS_EVERY_NTH_FRAME > 1 and self.frame_count % PROCESS_EVERY_NTH_FRAME != 0:
+                    self.cap.grab()
+                    time.sleep(0.05)
+                    continue
+
+                ret, frame = self.cap.read()
+                
+                # Check for frame read failure
+                if not ret or frame is None:
+                    if self.headless_mode:
+                        logging.warning(f"[{self.name}] Frame read failed. Reconnecting...")
+                    else:
+                        print(f"⚠️ [{self.name}] Frame read failed. Reconnecting...")
+                    if self.cap:
+                        try:
+                            self.cap.release()
+                        except Exception:
+                            pass
+                        self.cap = None
+                    delay = reconnect_delay_base
+                    continue
+
+                # Normal processing when frame is successfully read
+                # Conditional CLAHE + Unsharp Mask (Brightness-Gated)
+                frame = enhance_frame_if_dark(
+                    frame,
+                    dark_threshold = 80,
+                    clahe_clip     = 2.0,
+                    clahe_tile     = (8, 8),
+                    sharpen_amount = 1.5,
+                    enable_clahe   = True,
+                    enable_sharpen = True
+                )
+                if self._validate_frame(frame, "captured_frame"):
+                    frame_copy = frame.copy()
+                    
+                    # Scale inference frame down to max 640px wide (Section 2.1)
+                    h_orig, w_orig = frame_copy.shape[:2]
+                    if w_orig > 640:
+                        scale_factor = 640.0 / w_orig
+                        frame_resized = cv2.resize(frame_copy, (640, int(h_orig * scale_factor)), interpolation=cv2.INTER_LINEAR)
+                    else:
+                        frame_resized = frame_copy.copy()
+                        
+                    # Update thread-safe display property (Section 1.4)
+                    self.current_processed_frame = frame_copy
+                    
+                    # Cheap Motion Detection (Section 2.4)
+                    is_motion = True
+                    try:
+                        gray = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2GRAY)
+                        h_g, w_g = gray.shape[:2]
+                        if w_g > 320:
+                            s_g = 320.0 / w_g
+                            gray_small = cv2.resize(gray, (320, int(h_g * s_g)), interpolation=cv2.INTER_LINEAR)
+                        else:
+                            gray_small = gray
+                            
+                        if self.last_gray_frame is not None and self.last_gray_frame.shape == gray_small.shape:
+                            diff = cv2.absdiff(self.last_gray_frame, gray_small)
+                            mean_diff = np.mean(diff)
+                            if mean_diff < 8.0:
+                                is_motion = False
+                        self.last_gray_frame = gray_small
+                    except Exception as e:
+                        pass
+                        
+                    if not is_motion:
+                        # Clean up queue on no-motion
+                        try:
+                            while not self.frame_queue.empty():
+                                self.frame_queue.get_nowait()
+                        except:
+                            pass
                         time.sleep(0.05)
                         continue
-
-                    ret, frame = self.cap.read()
+                        
+                    # Dynamic FPS Throttling (Section 2.3)
+                    import psutil
+                    current_time = time.time()
+                    if not hasattr(self, '_last_cpu_check') or current_time - self._last_cpu_check > 5.0:
+                        self._last_cpu_check = current_time
+                        self._cpu_usage = psutil.cpu_percent(interval=None)
                     
-                    # Add retry logic for failed reads
-                    if not ret or frame is None:
-                        retry_count = 0
-                        while retry_count < 5:
-                            time.sleep(2.0)
-                            ret, frame = self.cap.read()
-                            if ret and frame is not None:
-                                break
-                            retry_count += 1
-
-                        if not ret:
-                            if self.headless_mode:
-                                logging.warning(f"[{self.name}] Stream lost after retries, exiting thread...")
-                            else:
-                                print(f"⚠️ [{self.name}] Stream lost after retries, exiting thread...")
-                            return
+                    cpu_usage = getattr(self, '_cpu_usage', 50.0)
+                    target_interval = 2.0 if cpu_usage >= 70.0 else 0.5
                     
-                    if ret and frame is not None:
-                        # Conditional CLAHE + Unsharp Mask (Brightness-Gated)
-                        frame = enhance_frame_if_dark(
-                            frame,
-                            dark_threshold = 80,
-                            clahe_clip     = 2.0,
-                            clahe_tile     = (8, 8),
-                            sharpen_amount = 1.5,
-                            enable_clahe   = True,
-                            enable_sharpen = True
-                        )
-                        if self._validate_frame(frame, "captured_frame"):
-                            frame_copy = frame.copy()
-                            
-                            # Scale inference frame down to max 640px wide (Section 2.1)
-                            h_orig, w_orig = frame_copy.shape[:2]
-                            if w_orig > 640:
-                                scale_factor = 640.0 / w_orig
-                                frame_resized = cv2.resize(frame_copy, (640, int(h_orig * scale_factor)), interpolation=cv2.INTER_LINEAR)
-                            else:
-                                frame_resized = frame_copy.copy()
-                                
-                            # Update thread-safe display property (Section 1.4)
-                            self.current_processed_frame = frame_copy
-                            
-                            # Cheap Motion Detection (Section 2.4)
-                            is_motion = True
-                            try:
-                                gray = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2GRAY)
-                                h_g, w_g = gray.shape[:2]
-                                if w_g > 320:
-                                    s_g = 320.0 / w_g
-                                    gray_small = cv2.resize(gray, (320, int(h_g * s_g)), interpolation=cv2.INTER_LINEAR)
-                                else:
-                                    gray_small = gray
-                                    
-                                if self.last_gray_frame is not None and self.last_gray_frame.shape == gray_small.shape:
-                                    diff = cv2.absdiff(self.last_gray_frame, gray_small)
-                                    mean_diff = np.mean(diff)
-                                    if mean_diff < 8.0:
-                                        is_motion = False
-                                self.last_gray_frame = gray_small
-                            except Exception as e:
-                                pass
-                                
-                            if not is_motion:
-                                # Clean up queue on no-motion
-                                try:
-                                    while not self.frame_queue.empty():
-                                        self.frame_queue.get_nowait()
-                                except:
-                                    pass
-                                time.sleep(0.05)
-                                continue
-                                
-                            # Dynamic FPS Throttling (Section 2.3)
-                            import psutil
-                            current_time = time.time()
-                            if not hasattr(self, '_last_cpu_check') or current_time - self._last_cpu_check > 5.0:
-                                self._last_cpu_check = current_time
-                                self._cpu_usage = psutil.cpu_percent(interval=None)
-                            
-                            cpu_usage = getattr(self, '_cpu_usage', 50.0)
-                            target_interval = 2.0 if cpu_usage >= 70.0 else 0.5
-                            
-                            if current_time - self.last_put_time > target_interval:
-                                self.last_put_time = current_time
-                                # Enforce strict queue size limits and drop on full (Section 2.2)
-                                try:
-                                    self.frame_queue.put_nowait({
-                                        'frame_resized': frame_resized,
-                                        'frame_original': frame_copy,
-                                        'camera_id': self.camera_id,
-                                        'camera_processor': self,
-                                        'frame_number': self.frame_count
-                                    })
-                                except queue.Full:
-                                    if logging.getLogger().isEnabledFor(logging.DEBUG):
-                                        logging.debug(f"[{self.name}] Frame queue full (maxsize=2), dropping incoming frame.")
-                                        
-                            # Dispatch task directly to central ProcessPoolExecutor (Section 1.2)
-                            if not self.frame_queue.empty():
-                                acquired = inference_semaphore.acquire(blocking=False)
-                                if acquired:
-                                    try:
-                                        frame_data = self.frame_queue.get_nowait()
-                                        
-                                        fr_resized = frame_data['frame_resized']
-                                        frame_bytes = fr_resized.tobytes()
-                                        shape = fr_resized.shape
-                                        dtype = fr_resized.dtype
-                                        
-                                        batch_inputs = [(self.camera_id, frame_bytes, shape, dtype, self.roi, self.roi_polygon)]
-                                        
-                                        inf_imgsz = 320 if self.global_settings.get('low_end_mode', True) else 640
-                                        
-                                        future = inference_executor.submit(
-                                            worker_batch_inference,
-                                            batch_inputs,
-                                            inf_imgsz,
-                                            self.confidence_threshold
-                                        )
-                                        
-                                        future.add_done_callback(
-                                            lambda fut, cam_proc=self, orig_frame=frame_data['frame_original']: on_inference_done(fut, cam_proc, orig_frame)
-                                        )
-                                    except queue.Empty:
-                                        inference_semaphore.release()
-                                    except Exception as ex:
-                                        print(f"❌ Error submitting task: {ex}")
-                                        inference_semaphore.release()
-                        else:
+                    if current_time - self.last_put_time > target_interval:
+                        self.last_put_time = current_time
+                        # Enforce strict queue size limits and drop on full (Section 2.2)
+                        try:
+                            self.frame_queue.put_nowait({
+                                'frame_resized': frame_resized,
+                                'frame_original': frame_copy,
+                                'camera_id': self.camera_id,
+                                'camera_processor': self,
+                                'frame_number': self.frame_count
+                            })
+                        except queue.Full:
                             if logging.getLogger().isEnabledFor(logging.DEBUG):
-                                logging.debug(f"[{self.name}] Skipping corrupted frame (H.264 decode error)")
-                    else:
-                        if self.headless_mode:
-                            logging.warning(f"[{self.name}] Stream lost after retries, exiting thread...")
-                        else:
-                            print(f"⚠️ [{self.name}] Stream lost after retries, exiting thread...")
-                        return
+                                logging.debug(f"[{self.name}] Frame queue full (maxsize=2), dropping incoming frame.")
+                                
+                    # Dispatch task directly to central ProcessPoolExecutor (Section 1.2)
+                    if not self.frame_queue.empty():
+                        acquired = inference_semaphore.acquire(blocking=False)
+                        if acquired:
+                            try:
+                                frame_data = self.frame_queue.get_nowait()
+                                
+                                fr_resized = frame_data['frame_resized']
+                                frame_bytes = fr_resized.tobytes()
+                                shape = fr_resized.shape
+                                dtype = fr_resized.dtype
+                                
+                                batch_inputs = [(self.camera_id, frame_bytes, shape, dtype, self.roi, self.roi_polygon)]
+                                
+                                inf_imgsz = 320 if self.global_settings.get('low_end_mode', True) else 640
+                                
+                                future = inference_executor.submit(
+                                    worker_batch_inference,
+                                    batch_inputs,
+                                    inf_imgsz,
+                                    self.confidence_threshold
+                                )
+                                
+                                future.add_done_callback(
+                                    lambda fut, cam_proc=self, orig_frame=frame_data['frame_original']: on_inference_done(fut, cam_proc, orig_frame)
+                                )
+                            except queue.Empty:
+                                inference_semaphore.release()
+                            except Exception as ex:
+                                print(f"❌ Error submitting task: {ex}")
+                                inference_semaphore.release()
+                else:
+                    if logging.getLogger().isEnabledFor(logging.DEBUG):
+                        logging.debug(f"[{self.name}] Skipping corrupted frame (H.264 decode error)")
                 
                 time.sleep(0.05)  # Small sleep to prevent busy-waiting
 
@@ -1485,6 +1569,7 @@ class CameraProcessor:
                     logging.error(f"[{self.name}] Error in fetch worker: {e}")
                 else:
                     print(f"❌ [{self.name}] Error in fetch worker: {e}")
+                time.sleep(1.0)
                 continue
 
     def _persist_roi_to_config(self):
@@ -1716,11 +1801,15 @@ class CameraProcessor:
 
             if not self.cap.isOpened():
                 if self.headless_mode:
-                    logging.error(f"[{self.name}] Could not open video source: {self.rtsp_source}")
+                    logging.error(f"[{self.name}] Could not open video source: {self.rtsp_source}. Reconnect worker will retry.")
                 else:
-                    print(f"❌ [{self.name}] Could not open video source: {self.rtsp_source}")
+                    print(f"❌ [{self.name}] Could not open video source: {self.rtsp_source}. Reconnect worker will retry.")
                 self.cap = None
-                return False
+                # Spawn FETCH thread anyway to allow background reconnection
+                if self.fetch_thread is None or not self.fetch_thread.is_alive():
+                    self.fetch_thread = Thread(target=self.frame_fetch_worker, daemon=True)
+                    self.fetch_thread.start()
+                return True
 
             if self.roi is None:
                 self._maybe_select_roi()
@@ -2137,6 +2226,18 @@ def signal_handler(signum, frame):
 def main():
     global stop_processing, plate_logger, cameras_dict, PROCESS_EVERY_NTH_FRAME
     global inference_executor, inference_semaphore
+
+    # CPU Affinity & process pinning (Section 1C)
+    try:
+        import psutil
+        import os
+        p = psutil.Process(os.getpid())
+        num_cores = psutil.cpu_count()
+        if num_cores >= 2:
+            p.cpu_affinity([0])
+            print("📌 [Main] Pinned main process to core 0")
+    except Exception as e:
+        print(f"⚠️ Main process affinity setting failed: {e}")
 
     # Load configuration
     config = load_config()
