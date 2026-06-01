@@ -36,7 +36,10 @@ def is_plate_allowed(plate: str) -> bool:
         # Update cache
         with _cache_lock:
             _PLATE_CACHE[clean_plate] = (is_allowed, current_time)
-            
+            if len(_PLATE_CACHE) > 10000:
+                import logging
+                logging.warning(f"Plate cache size ({len(_PLATE_CACHE)}) exceeded 10,000 entries!")
+        
         return is_allowed
     except Exception as e:
         print(f"⚠️ Error checking plate {plate}: {e}")
@@ -59,8 +62,9 @@ class PlateLogger:
         self.dedup_window = dedup_window  # Seconds between logging same plate
         self.max_confidence_threshold = max_confidence_threshold  # Only log high-confidence detections
         
-        # Track recent detections to prevent duplicates
-        self.recent_detections = {}  # plate -> (timestamp, confidence, count)
+        # Track recent detections to prevent duplicates - capped to 500 entries using OrderedDict
+        from collections import OrderedDict
+        self.recent_detections = OrderedDict()  # plate -> (timestamp, confidence, count)
         
         # Async Database worker
         self.db_queue = queue.Queue()
@@ -76,60 +80,67 @@ class PlateLogger:
         # Load allowed plates from database (fallback to JSON if needed)
         self.load_allowed_plates()
         
-        # Start background refresh thread for cache
-        self.refresh_thread = threading.Thread(target=self._refresh_plates_worker, daemon=True)
-        self.refresh_thread.start()
-        
-    def _refresh_plates_worker(self):
-        """Background thread to refresh the allowed plates cache every 60s"""
+    def _database_worker(self):
+        """Dedicated background thread to handle database writes asynchronously in batches of up to 10 records"""
         while True:
             try:
-                time.sleep(300)
-                with DatabaseConnection() as db:
-                    db.execute("SELECT license_plate FROM allowed_plates")
-                    rows = db.fetchall()
-                    
-                new_cache = {}
-                curr_time = time.time()
-                for r in rows:
-                    new_cache[r['license_plate']] = (True, curr_time)
-                    
-                with _cache_lock:
-                    global _PLATE_CACHE
-                    _PLATE_CACHE.clear()
-                    _PLATE_CACHE.update(new_cache)
-            except Exception as e:
-                print(f"⚠️ Error refreshing plate cache: {e}")
-    
-    def _database_worker(self):
-        """Dedicated background thread to handle database writes asynchronously"""
-        with DatabaseConnection() as db:
-            while True:
-                try:
-                    task = self.db_queue.get()
-                    if task is None:
-                        break
-                    
-                    query, params, clean_plate, status_icon, verification_status, access_granted, reason = task
-                    
+                tasks = []
+                task = self.db_queue.get()
+                if task is None:
+                    break
+                tasks.append(task)
+                
+                # Try to batch up to 9 more tasks
+                while len(tasks) < 10:
                     try:
-                        db.execute(query, params)
-                        db.connection.commit()
-                        print(f"{status_icon} Plate {clean_plate}: {verification_status} - Access: {access_granted} - LOGGED ({reason})")
-                    except Exception as e:
-                        print(f"❌ Error logging detection to database (async): {e}")
-                        db.connection.rollback()
-                        print(f"{status_icon} Plate {clean_plate}: {verification_status} - Access: {access_granted} - LOGGED (but DB error)")
+                        task = self.db_queue.get_nowait()
+                        if task is None:
+                            self.db_queue.put(None)
+                            break
+                        tasks.append(task)
+                    except queue.Empty:
+                        break
+                
+                if tasks:
+                    query = tasks[0][0]  # Standard insert query
+                    params_list = [t[1] for t in tasks]
                     
-                    self.db_queue.task_done()
-                except Exception as e:
-                    print(f"❌ Error in database worker thread: {e}")
+                    with DatabaseConnection() as db:
+                        try:
+                            # executemany to reduce connection overhead and locks
+                            db.cursor.executemany(query, params_list)
+                            db.connection.commit()
+                            for t in tasks:
+                                _, _, clean_plate, status_icon, verification_status, access_granted, reason = t
+                                print(f"{status_icon} Plate {clean_plate}: {verification_status} - Access: {access_granted} - LOGGED ({reason}) (batch size {len(tasks)})")
+                        except Exception as e:
+                            print(f"❌ Error logging detection batch to database (async): {e}")
+                            db.connection.rollback()
+                            for t in tasks:
+                                _, _, clean_plate, status_icon, verification_status, access_granted, reason = t
+                                print(f"{status_icon} Plate {clean_plate}: {verification_status} - Access: {access_granted} - LOGGED (but DB error) (batch size {len(tasks)})")
+                    
+                    for _ in tasks:
+                        self.db_queue.task_done()
+                        
+            except Exception as e:
+                print(f"❌ Error in database worker thread: {e}")
     
     def init_database(self):
         """Initialize database connection and tables"""
         try:
             # Try to initialize database (creates tables if they don't exist)
             initialize_database()
+            # Proactively ensure indexes exist (Section 5.1)
+            with DatabaseConnection() as db:
+                try:
+                    db.execute("ALTER TABLE detections ADD INDEX IF NOT EXISTS idx_timestamp (timestamp)")
+                except Exception:
+                    pass
+                try:
+                    db.execute("ALTER TABLE allowed_plates ADD INDEX IF NOT EXISTS idx_license_plate (license_plate)")
+                except Exception:
+                    pass
         except Exception as e:
             print(f"Warning: Database initialization issue: {e}")
     
@@ -215,44 +226,50 @@ class PlateLogger:
         current_time = time.time()
         clean_plate = plate.replace(" ", "").upper()
         
-        # Check if we have a recent detection of this plate
-        if clean_plate in self.recent_detections:
-            last_time, last_confidence, count = self.recent_detections[clean_plate]
-            time_diff = current_time - last_time
+        with self.lock:
+            # Check if we have a recent detection of this plate
+            if clean_plate in self.recent_detections:
+                last_time, last_confidence, count = self.recent_detections[clean_plate]
+                time_diff = current_time - last_time
+                
+                # If within dedup window, don't log unless confidence is significantly higher
+                if time_diff < self.dedup_window:
+                    # Only log if confidence is much higher (indicating better detection)
+                    if confidence > last_confidence + 0.1:  # 10% improvement threshold
+                        # Update with new higher confidence detection and move to end for LRU OrderedDict
+                        self.recent_detections[clean_plate] = (current_time, confidence, count + 1)
+                        self.recent_detections.move_to_end(clean_plate)
+                        return True, f"Higher confidence detection ({confidence:.2f} vs {last_confidence:.2f})"
+                    else:
+                        # Update count but don't log, and move to end
+                        self.recent_detections[clean_plate] = (last_time, last_confidence, count + 1)
+                        self.recent_detections.move_to_end(clean_plate)
+                        return False, f"Duplicate within {self.dedup_window}s window (count: {count + 1})"
             
-            # If within dedup window, don't log unless confidence is significantly higher
-            if time_diff < self.dedup_window:
-                # Only log if confidence is much higher (indicating better detection)
-                if confidence > last_confidence + 0.1:  # 10% improvement threshold
-                    # Update with new higher confidence detection
-                    self.recent_detections[clean_plate] = (current_time, confidence, count + 1)
-                    return True, f"Higher confidence detection ({confidence:.2f} vs {last_confidence:.2f})"
-                else:
-                    # Update count but don't log
-                    self.recent_detections[clean_plate] = (last_time, last_confidence, count + 1)
-                    return False, f"Duplicate within {self.dedup_window}s window (count: {count + 1})"
-        
-        # Check confidence threshold
-        if confidence < self.max_confidence_threshold:
-            return False, f"Low confidence ({confidence:.2f} < {self.max_confidence_threshold})"
-        
-        # New detection or outside dedup window - log it
-        self.recent_detections[clean_plate] = (current_time, confidence, 1)
-        self.active_detections_count += 1
-        return True, "New detection or outside dedup window"
+            # Check confidence threshold
+            if confidence < self.max_confidence_threshold:
+                return False, f"Low confidence ({confidence:.2f} < {self.max_confidence_threshold})"
+            
+            # New detection or outside dedup window - log it
+            self.recent_detections[clean_plate] = (current_time, confidence, 1)
+            # Cap the OrderedDict size to 500
+            if len(self.recent_detections) > 500:
+                self.recent_detections.popitem(last=False)
+            self.active_detections_count += 1
+            return True, "New detection or outside dedup window"
     
     def cleanup_old_detections(self):
         """Remove old detections from memory to prevent memory bloat"""
         current_time = time.time()
-        old_plates = []
-        
-        for plate, (timestamp, confidence, count) in self.recent_detections.items():
-            if current_time - timestamp > self.dedup_window * 2:  # Keep 2x dedup window
-                old_plates.append(plate)
-        
-        for plate in old_plates:
-            del self.recent_detections[plate]
-            self.active_detections_count = max(0, self.active_detections_count - 1)
+        with self.lock:
+            old_plates = []
+            for plate, (timestamp, confidence, count) in self.recent_detections.items():
+                if current_time - timestamp > self.dedup_window * 2:  # Keep 2x dedup window
+                    old_plates.append(plate)
+            
+            for plate in old_plates:
+                del self.recent_detections[plate]
+                self.active_detections_count = max(0, self.active_detections_count - 1)
     
     def log_detection(self, 
                      plate: str, 
@@ -289,7 +306,8 @@ class PlateLogger:
                 timestamp = datetime.now()
                 
                 # Get detection count for this plate
-                detection_count = self.recent_detections.get(clean_plate, (0, 0, 0))[2]
+                with self.lock:
+                    detection_count = self.recent_detections.get(clean_plate, (0, 0, 0))[2]
                 
                 # Insert into MySQL database via Async Queue
                 try:
@@ -326,7 +344,8 @@ class PlateLogger:
                     print(f"❌ Error queuing detection to database: {e}")
             else:
                 # Just print detection info without logging
-                detection_count = self.recent_detections.get(clean_plate, (0, 0, 0))[2]
+                with self.lock:
+                    detection_count = self.recent_detections.get(clean_plate, (0, 0, 0))[2]
                 print(f"{status_icon} Plate {clean_plate}: {verification['verification_status']} - Access: {verification['access_granted']} - SKIPPED ({reason}) - Count: {detection_count}")
             
             # Periodic cleanup of old detections
@@ -345,7 +364,8 @@ class PlateLogger:
         """Get statistics from the database and memory"""
         try:
             # Get in-memory statistics (current session)
-            total_detection_count = sum(count for _, _, count in self.recent_detections.values())
+            with self.lock:
+                total_detection_count = sum(count for _, _, count in self.recent_detections.values())
             
             # Get database statistics
             db_stats = {"total_detections": 0, "verified_plates": 0, "unverified_plates": 0, "unique_plates": 0}
@@ -398,7 +418,9 @@ class PlateLogger:
             verified_count = 0
             unverified_count = 0
             
-            for plate, (timestamp, confidence, count) in self.recent_detections.items():
+            with self.lock:
+                recent_items = list(self.recent_detections.items())
+            for plate, (timestamp, confidence, count) in recent_items:
                 if current_time - timestamp < self.dedup_window * 2:
                     active_detections += 1
                     total_detection_count += count
