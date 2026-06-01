@@ -874,49 +874,9 @@ function editCamera(event, cameraId) {
 // Set ROI for a camera
 function setCameraRoi(event, cameraId) {
     event.preventDefault();
-    const trigger = event.currentTarget;
-    const originalContent = trigger.innerHTML;
-    trigger.innerHTML = '<i class="bi bi-hourglass-split me-2"></i>Opening...';
-
-    fetch(`/cameras/set_roi/${cameraId}`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        }
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            if (data.mode === 'web_roi') {
-                // Show web-based ROI selection modal
-                showWebRoiModal(data.frame, cameraId, data.camera_name);
-            } else {
-                // Traditional success message
-                if (typeof showSuccess === 'function') {
-                    showSuccess(data.message);
-                } else {
-                    alert(data.message);
-                }
-            }
-        } else {
-            if (typeof showError === 'function') {
-                showError(data.message);
-            } else {
-                alert(data.message);
-            }
-        }
-    })
-    .catch(error => {
-        console.error('Error setting ROI:', error);
-        if (typeof showError === 'function') {
-            showError('Error setting ROI: ' + error.message);
-        } else {
-            alert('Error setting ROI: ' + error.message);
-        }
-    })
-    .finally(() => {
-        trigger.innerHTML = originalContent;
-    });
+    const camera = camerasData.find(cam => cam.id == cameraId);
+    const cameraName = camera ? camera.name : 'Unknown Camera';
+    showWebRoiModal(null, cameraId, cameraName);
 }
 
 // Web-based ROI selection modal
@@ -1012,7 +972,11 @@ function showWebRoiModal(frameData, cameraId, cameraName, isNewCamera = false) {
 
         redrawCanvas();
     };
-    img.src = 'data:image/jpeg;base64,' + frameData;
+    if (isNewCamera) {
+        img.src = 'data:image/jpeg;base64,' + frameData;
+    } else {
+        img.src = `/api/cameras/${cameraId}/snapshot`;
+    }
 
     // ROI type selection
     document.getElementById('rectangleMode').addEventListener('change', function() {

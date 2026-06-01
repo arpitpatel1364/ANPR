@@ -220,84 +220,54 @@ class WebSocketManager:
             print(f"Error sending camera status: {e}")
     
     def _test_camera_connection(self, camera):
-        """Test camera RTSP connection and return status"""
-        try:
-            rtsp_source = camera.get('rtsp_source', '')
-            if not rtsp_source:
-                return {
-                    'status': 'no_source',
-                    'quality': 'unknown',
-                    'error': 'No RTSP source configured'
-                }
-            
-            # Test connection using ffprobe
-            import subprocess
-            import time
-            
-            start_time = time.time()
-            result = subprocess.run([
-                'ffprobe', '-v', 'quiet', '-print_format', 'json', 
-                '-show_streams', '-timeout', '5000000',  # 5 second timeout in microseconds
-                rtsp_source
-            ], capture_output=True, text=True, timeout=5)
-            
-            response_time = round((time.time() - start_time) * 1000, 2)  # Convert to milliseconds
-            
-            if result.returncode == 0:
-                # Parse stream info to determine quality
-                try:
-                    import json
-                    stream_info = json.loads(result.stdout)
-                    streams = stream_info.get('streams', [])
-                    
-                    # Determine connection quality based on response time and stream info
-                    if response_time < 1000:  # Less than 1 second
-                        quality = 'excellent'
-                    elif response_time < 3000:  # Less than 3 seconds
-                        quality = 'good'
-                    elif response_time < 5000:  # Less than 5 seconds
-                        quality = 'fair'
-                    else:
-                        quality = 'poor'
-                    
-                    return {
-                        'status': 'connected',
-                        'quality': quality,
-                        'response_time': response_time,
-                        'streams_found': len(streams)
-                    }
-                except:
-                    return {
-                        'status': 'connected',
-                        'quality': 'unknown',
-                        'response_time': response_time
-                    }
-            else:
-                return {
-                    'status': 'disconnected',
-                    'quality': 'none',
-                    'error': result.stderr.strip() or 'Connection failed',
-                    'response_time': response_time
-                }
-                
-        except subprocess.TimeoutExpired:
+        """
+        Lightweight TCP port check replacing ffprobe subprocess.
+        Returns status dict.
+        Timeout: 3 seconds max (vs ffprobe's 5s timeout).
+        """
+        import socket as _socket
+        import time
+        
+        rtsp_url = camera.get('rtsp_source') or camera.get('url', '')
+        if not rtsp_url:
             return {
-                'status': 'timeout',
-                'quality': 'none',
-                'error': 'Connection timeout (5s)',
-                'response_time': 5000
-            }
-        except FileNotFoundError:
-            return {
-                'status': 'no_ffprobe',
+                'status': 'no_source',
                 'quality': 'unknown',
-                'error': 'ffprobe not available for testing'
+                'error': 'No RTSP source configured'
             }
+            
+        start_time = time.time()
+        try:
+            # Parse host from rtsp://host:port/path
+            host_part = rtsp_url.replace('rtsp://', '').split('/')[0]
+            if ':' in host_part:
+                host, port = host_part.rsplit(':', 1)
+                port = int(port)
+            else:
+                host = host_part
+                port = 554  # default RTSP port
+            
+            with _socket.create_connection((host, port), timeout=3):
+                response_time = round((time.time() - start_time) * 1000, 2)
+                if response_time < 500:
+                    quality = 'excellent'
+                elif response_time < 1500:
+                    quality = 'good'
+                else:
+                    quality = 'fair'
+                return {
+                    'status': 'connected',
+                    'quality': quality,
+                    'response_time': response_time,
+                    'streams_found': 1
+                }
         except Exception as e:
+            response_time = round((time.time() - start_time) * 1000, 2)
             return {
-                'status': 'error',
+                'status': 'disconnected',
                 'quality': 'none',
-                'error': str(e)
+                'error': str(e),
+                'response_time': response_time
             }
     
     def add_client(self, client_id: str, room: str = 'dashboard'):

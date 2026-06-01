@@ -108,6 +108,180 @@ import re
 import numpy as np
 import time
 from threading import Thread, Lock
+
+from collections import Counter, defaultdict
+import time as _time
+
+class PlateTracker:
+    """
+    Lightweight multi-frame plate tracker using IoU box matching.
+    Accumulates LPRNet reads per tracked vehicle and outputs the
+    majority-vote result — no GPU, no new dependencies.
+
+    Config:
+        min_votes     : minimum reads before outputting a result
+        max_gap_secs  : seconds of no detection before track expires
+        iou_threshold : minimum IoU to associate a detection with
+                        an existing track
+    """
+
+    def __init__(self, min_votes=1, max_gap_secs=2.0, iou_threshold=0.35):
+        self.min_votes     = min_votes
+        self.max_gap_secs  = max_gap_secs
+        self.iou_threshold = iou_threshold
+        self._tracks       = {}   # track_id -> track dict
+        self._next_id      = 0
+
+    def _iou(self, a, b):
+        """Compute IoU between two boxes [x1,y1,x2,y2]."""
+        ax1,ay1,ax2,ay2 = a
+        bx1,by1,bx2,by2 = b
+        ix1 = max(ax1, bx1); iy1 = max(ay1, by1)
+        ix2 = min(ax2, bx2); iy2 = min(ay2, by2)
+        inter = max(0, ix2-ix1) * max(0, iy2-iy1)
+        if inter == 0:
+            return 0.0
+        area_a = (ax2-ax1) * (ay2-ay1)
+        area_b = (bx2-bx1) * (by2-by1)
+        return inter / (area_a + area_b - inter + 1e-6)
+
+    def _match(self, box):
+        """Find best matching existing track by IoU. Returns track_id or None."""
+        best_id, best_iou = None, self.iou_threshold
+        for tid, track in self._tracks.items():
+            iou = self._iou(track['box'], box)
+            if iou > best_iou:
+                best_iou = iou
+                best_id  = tid
+        return best_id
+
+    def _expire_stale(self):
+        """Remove tracks that haven't been seen for max_gap_secs."""
+        now = _time.monotonic()
+        stale = [tid for tid, t in self._tracks.items()
+                 if now - t['last_seen'] > self.max_gap_secs]
+        for tid in stale:
+            del self._tracks[tid]
+
+    def update(self, box, plate_str, confidence=1.0):
+        """
+        Feed a new detection into the tracker.
+
+        Args:
+            box        : [x1, y1, x2, y2] bounding box (ints)
+            plate_str  : decoded plate string from LPRNet
+            confidence : YOLO or LPRNet confidence score (float)
+
+        Returns:
+            result     : str or None
+                         str  — voted plate string when confident enough
+                         None — still accumulating, not ready yet
+        """
+        self._expire_stale()
+
+        tid = self._match(box)
+        now = _time.monotonic()
+
+        if tid is None:
+            # New vehicle — start a new track
+            tid = self._next_id
+            self._next_id += 1
+            self._tracks[tid] = {
+                'box'      : box,
+                'votes'    : Counter(),
+                'last_seen': now,
+                'emitted'  : False,
+            }
+
+        track = self._tracks[tid]
+        track['box']       = box          # update to latest position
+        track['last_seen'] = now
+        track['votes'][plate_str] += 1
+
+        # Emit when we have enough votes and haven't emitted yet
+        total_votes = sum(track['votes'].values())
+        if total_votes >= self.min_votes and not track['emitted']:
+            track['emitted'] = True
+            best, count = track['votes'].most_common(1)[0]
+            # Only emit if majority agrees (>50% of votes)
+            if count > total_votes * 0.5:
+                return best
+
+        return None   # still accumulating
+
+    def flush(self):
+        """
+        Force-emit all pending tracks with enough votes.
+        Call this on camera disconnect or system shutdown.
+        Returns list of (plate_str, vote_count) tuples.
+        """
+        results = []
+        for tid, track in list(self._tracks.items()):
+            votes = track['votes']
+            if votes and not track['emitted']:
+                best, count = votes.most_common(1)[0]
+                results.append((best, count))
+        self._tracks.clear()
+        return results
+
+
+def enhance_frame_if_dark(frame,
+                           dark_threshold=80,
+                           clahe_clip=2.0,
+                           clahe_tile=(8, 8),
+                           sharpen_amount=1.5,
+                           enable_clahe=True,
+                           enable_sharpen=True):
+    """
+    Applies CLAHE + unsharp mask ONLY when frame is dark.
+    Returns original frame untouched in normal light conditions.
+
+    Args:
+        frame           : numpy array (H, W, 3) BGR — raw camera frame
+        dark_threshold  : mean brightness below which to enhance
+                          (0–255 scale, default 80 ≈ dim indoor/dusk)
+        clahe_clip      : CLAHE clip limit (higher = more contrast)
+        clahe_tile      : CLAHE tile grid size (smaller = more local)
+        sharpen_amount  : unsharp mask strength (1.0 = no change,
+                          1.5 = moderate, 2.0 = strong)
+        enable_clahe    : config flag to disable entirely
+        enable_sharpen  : config flag to disable sharpen step
+
+    Returns:
+        frame : numpy array — enhanced if dark, original if bright
+    """
+    if not enable_clahe:
+        return frame   # feature disabled — return immediately
+
+    # Check brightness on grayscale — cheap single-channel operation
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    mean_brightness = gray.mean()
+
+    if mean_brightness >= dark_threshold:
+        return frame   # bright enough — skip all enhancement
+
+    # --- Frame is dark — apply CLAHE ---
+    # Apply per-channel in LAB color space to avoid color shift
+    lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
+    l, a, b = cv2.split(lab)
+
+    clahe = cv2.createCLAHE(clipLimit=clahe_clip,
+                             tileGridSize=clahe_tile)
+    l_enhanced = clahe.apply(l)
+
+    lab_enhanced = cv2.merge([l_enhanced, a, b])
+    frame_enhanced = cv2.cvtColor(lab_enhanced, cv2.COLOR_LAB2BGR)
+
+    # --- Apply unsharp mask for edge sharpening ---
+    if enable_sharpen:
+        blurred = cv2.GaussianBlur(frame_enhanced, (3, 3), 0)
+        frame_enhanced = cv2.addWeighted(
+            frame_enhanced, sharpen_amount,
+            blurred, -(sharpen_amount - 1.0),
+            0
+        )
+
+    return frame_enhanced
 import queue
 import concurrent.futures
 from plate_logger import PlateLogger, _PLATE_CACHE, _cache_lock
@@ -119,7 +293,7 @@ import torch
 from websocket_client import initialize_websocket_client, get_websocket_client
 
 try:
-    torch.set_num_threads(2)        # Prevent PyTorch from using all cores
+    torch.set_num_threads(1)        # Prevent PyTorch from using all cores
 except RuntimeError:
     pass
 try:
@@ -127,7 +301,7 @@ try:
 except RuntimeError:
     pass
 try:
-    cv2.setNumThreads(2)            # Prevent OpenCV from using all cores
+    cv2.setNumThreads(1)            # Prevent OpenCV from using all cores
 except Exception:
     pass
 model = None
@@ -162,7 +336,7 @@ def init_worker(yolo_path, lprnet_path):
     
     # Configure CPU thread counts for the subprocesses to prevent core thrashing
     try:
-        torch.set_num_threads(2)
+        torch.set_num_threads(1)
     except RuntimeError:
         pass
     try:
@@ -170,7 +344,7 @@ def init_worker(yolo_path, lprnet_path):
     except RuntimeError:
         pass
     try:
-        cv2.setNumThreads(2)
+        cv2.setNumThreads(1)
     except Exception:
         pass
     
@@ -217,6 +391,70 @@ def init_worker(yolo_path, lprnet_path):
             
     print(f"✅ LPRNet loaded in worker process {os.getpid()}")
 
+
+def expand_roi(x1, y1, x2, y2, frame_h, frame_w, margin=0.07):
+    """
+    Expand YOLO bounding box by margin% on each side.
+    Clamps to frame boundaries — never goes out of bounds.
+
+    Args:
+        x1,y1,x2,y2 : original box coords (ints or floats)
+        frame_h      : frame height (pixels)
+        frame_w      : frame width  (pixels)
+        margin       : fractional expansion per side (default 7%)
+
+    Returns:
+        x1,y1,x2,y2 : expanded and clamped coords (ints)
+    """
+    w = x2 - x1
+    h = y2 - y1
+    pad_x = int(w * margin)
+    pad_y = int(h * margin)
+    x1 = max(0,       x1 - pad_x)
+    y1 = max(0,       y1 - pad_y)
+    x2 = min(frame_w, x2 + pad_x)
+    y2 = min(frame_h, y2 + pad_y)
+    return int(x1), int(y1), int(x2), int(y2)
+
+
+def pad_to_aspect(crop, target_w=94, target_h=24):
+    """
+    Resize crop to LPRNet input size without distorting characters.
+    Scales by height, then pads width with black to reach target_w.
+    Avoids stretching that makes characters unrecognisable.
+
+    Args:
+        crop     : numpy array (H, W, C) — plate crop from frame
+        target_w : LPRNet input width  (default 94)
+        target_h : LPRNet input height (default 24)
+
+    Returns:
+        padded   : numpy array (target_h, target_w, C)
+    """
+    h, w = crop.shape[:2]
+    if h == 0 or w == 0:
+        return cv2.resize(crop, (target_w, target_h))
+
+    # Scale by height, keep aspect ratio
+    scale = target_h / h
+    new_w = int(w * scale)
+    resized = cv2.resize(crop, (new_w, target_h),
+                         interpolation=cv2.INTER_LINEAR)
+
+    if new_w >= target_w:
+        # Wider than target — just resize to fit (last resort)
+        return cv2.resize(resized, (target_w, target_h),
+                          interpolation=cv2.INTER_AREA)
+
+    # Pad width symmetrically with black
+    pad_left  = (target_w - new_w) // 2
+    pad_right = target_w - new_w - pad_left
+    padded = cv2.copyMakeBorder(resized,
+                                0, 0, pad_left, pad_right,
+                                cv2.BORDER_CONSTANT, value=(0, 0, 0))
+    return padded
+
+
 def worker_batch_inference(batch_inputs, inference_imgsz, confidence_threshold):
     """
     Executes inference for a batch of frames in the worker process.
@@ -229,6 +467,10 @@ def worker_batch_inference(batch_inputs, inference_imgsz, confidence_threshold):
     from LPRNet import predict_plate
     
     results = []
+    
+    # 1. Reconstruct all frames and apply ROI crops
+    preprocessed_inputs = []
+    frames_for_detection = []
     
     for camera_id, frame_bytes, shape, dtype, roi, roi_polygon in batch_inputs:
         try:
@@ -279,49 +521,94 @@ def worker_batch_inference(batch_inputs, inference_imgsz, confidence_threshold):
             except Exception as e:
                 print(f"⚠️ Error applying ROI in worker: {e}")
                 
-            # Run YOLOv8 detection
-            yolo_results = worker_yolo.predict(frame_for_detection, imgsz=inference_imgsz, verbose=False)
+            preprocessed_inputs.append({
+                'camera_id': camera_id,
+                'frame_for_detection': frame_for_detection,
+                'roi_offset_x': roi_offset_x,
+                'roi_offset_y': roi_offset_y
+            })
+            frames_for_detection.append(frame_for_detection)
+        except Exception as e:
+            print(f"❌ Error reconstructing frame for camera {camera_id}: {e}")
+            preprocessed_inputs.append({
+                'camera_id': camera_id,
+                'frame_for_detection': None,
+                'roi_offset_x': 0,
+                'roi_offset_y': 0
+            })
+            frames_for_detection.append(None)
             
-            detections = []
-            if yolo_results and len(yolo_results) > 0 and yolo_results[0].boxes is not None:
-                for result in yolo_results[0].boxes:
-                    x1, y1, x2, y2 = map(int, result.xyxy[0])
-                    conf = float(result.conf[0]) if result.conf is not None else 0.0
-                    
-                    if conf < confidence_threshold:
-                        continue
+    # 2. Run batched YOLOv8 detection
+    yolo_results_batch = []
+    valid_frames = [f for f in frames_for_detection if f is not None]
+    if valid_frames:
+        try:
+            yolo_results_batch = worker_yolo.predict(valid_frames, imgsz=inference_imgsz, verbose=False)
+        except Exception as e:
+            print(f"⚠️ YOLO batch inference error: {e}")
+            
+    # Map back results to corresponding inputs
+    yolo_result_idx = 0
+    
+    # 3. Process detections sequentially and run LPRNet
+    for idx, input_data in enumerate(preprocessed_inputs):
+        camera_id = input_data['camera_id']
+        frame_for_detection = input_data['frame_for_detection']
+        roi_offset_x = input_data['roi_offset_x']
+        roi_offset_y = input_data['roi_offset_y']
+        
+        if frame_for_detection is None:
+            results.append((camera_id, []))
+            continue
+            
+        detections = []
+        try:
+            if yolo_result_idx < len(yolo_results_batch):
+                yolo_results = yolo_results_batch[yolo_result_idx]
+                yolo_result_idx += 1
+                
+                if yolo_results and yolo_results.boxes is not None:
+                    for result in yolo_results.boxes:
+                        x1, y1, x2, y2 = map(int, result.xyxy[0])
+                        conf = float(result.conf[0]) if result.conf is not None else 0.0
                         
-                    h_det, w_det, _ = frame_for_detection.shape
-                    x1, y1, x2, y2 = max(0, x1), max(0, y1), min(w_det, x2), min(h_det, y2)
-                    
-                    if x2 <= x1 or y2 <= y1:
-                        continue
+                        if conf < confidence_threshold:
+                            continue
+                            
+                        h_det, w_det, _ = frame_for_detection.shape
+                        # Expand ROI
+                        x1, y1, x2, y2 = expand_roi(x1, y1, x2, y2, h_det, w_det, margin=0.07)
                         
-                    cropped_plate = frame_for_detection[y1:y2, x1:x2]
-                    if cropped_plate.size == 0 or cropped_plate.shape[0] < 10 or cropped_plate.shape[1] < 10:
-                        continue
+                        if x2 <= x1 or y2 <= y1:
+                            continue
+                            
+                        cropped_plate = frame_for_detection[y1:y2, x1:x2]
+                        if cropped_plate.size == 0 or cropped_plate.shape[0] < 10 or cropped_plate.shape[1] < 10:
+                            continue
+                            
+                        # Aspect padding
+                        cropped_plate = pad_to_aspect(cropped_plate, target_w=94, target_h=24)
                         
-                    if not cropped_plate.flags['C_CONTIGUOUS']:
-                        cropped_plate = np.ascontiguousarray(cropped_plate)
-                    if cropped_plate.dtype != np.uint8:
-                        cropped_plate = cropped_plate.astype(np.uint8)
+                        if not cropped_plate.flags['C_CONTIGUOUS']:
+                            cropped_plate = np.ascontiguousarray(cropped_plate)
+                        if cropped_plate.dtype != np.uint8:
+                            cropped_plate = cropped_plate.astype(np.uint8)
+                            
+                        # LPRNet OCR Prediction
+                        try:
+                            license_plate_text = predict_plate(worker_lprnet, cropped_plate, worker_device)
+                        except Exception as ocr_error:
+                            print(f"⚠️ OCR Error in worker: {ocr_error}")
+                            continue
+                            
+                        detections.append({
+                            'plate_text': license_plate_text,
+                            'bbox': (x1, y1, x2, y2),
+                            'roi_offset': (roi_offset_x, roi_offset_y),
+                            'confidence': conf
+                        })
                         
-                    # LPRNet OCR Prediction
-                    try:
-                        license_plate_text = predict_plate(worker_lprnet, cropped_plate, worker_device)
-                    except Exception as ocr_error:
-                        print(f"⚠️ OCR Error in worker: {ocr_error}")
-                        continue
-                        
-                    detections.append({
-                        'plate_text': license_plate_text,
-                        'bbox': (x1, y1, x2, y2),
-                        'roi_offset': (roi_offset_x, roi_offset_y),
-                        'confidence': conf
-                    })
-                    
             results.append((camera_id, detections))
-            
         except Exception as e:
             print(f"❌ Error in worker_batch_inference for camera {camera_id}: {e}")
             results.append((camera_id, []))
@@ -419,6 +706,13 @@ class CameraProcessor:
         self.enabled = camera_config['enabled']
         self.api_enabled = camera_config['api_enabled']
         self.api_settings = camera_config['api_settings']
+
+        # Multi-frame plate tracker
+        self.plate_tracker = PlateTracker(
+            min_votes=1,
+            max_gap_secs=2.0,
+            iou_threshold=0.35
+        )
 
         self.headless_mode = headless_mode
         self.headless_settings = headless_settings or {}
@@ -760,7 +1054,21 @@ class CameraProcessor:
             success_count = 0
             username = self.api_settings.get('username', 'admin')
             password = self.api_settings.get('password', 'Admin@123')
-            base_url = self.api_settings.get('base_url', 'http://192.168.1.124/cpapi/configManager.cgi')
+            base_url = self.api_settings.get('base_url', '').strip()
+            if not base_url:
+                if self.headless_mode:
+                    logging.info(f"[{self.name}] API base_url is empty. Skipping API call.")
+                else:
+                    print(f"ℹ️ [{self.name}] API base_url is empty. Skipping API call.")
+                return False
+
+            if not (base_url.startswith('http://') or base_url.startswith('https://')):
+                if self.headless_mode:
+                    logging.warning(f"[{self.name}] API base_url is invalid ('{base_url}'). Skipping API call.")
+                else:
+                    print(f"⚠️ [{self.name}] API base_url is invalid ('{base_url}'). Skipping API call.")
+                return False
+
             timeout = self.api_settings.get('timeout', 5)
             max_retries = self.api_settings.get('max_retries', 3)
 
@@ -880,6 +1188,15 @@ class CameraProcessor:
                     if logging.getLogger().isEnabledFor(logging.DEBUG):
                         logging.debug(f"[{self.name}] Invalid plate format (not Indian), skipping: {license_plate_text}")
                     continue
+                
+                # Feed detection into PlateTracker for majority voting
+                voted_plate = self.plate_tracker.update([x1, y1, x2, y2], license_plate_text, confidence)
+                if voted_plate is None:
+                    # Still accumulating votes, skip this frame
+                    continue
+                
+                # Use majority-voted plate number
+                license_plate_text = voted_plate
                 
                 if license_plate_text and license_plate_text != "No license plate detected":
                     processing_time = (time.time() - start_time) * 1000
@@ -1041,6 +1358,16 @@ class CameraProcessor:
                             return
                     
                     if ret and frame is not None:
+                        # Conditional CLAHE + Unsharp Mask (Brightness-Gated)
+                        frame = enhance_frame_if_dark(
+                            frame,
+                            dark_threshold = 80,
+                            clahe_clip     = 2.0,
+                            clahe_tile     = (8, 8),
+                            sharpen_amount = 1.5,
+                            enable_clahe   = True,
+                            enable_sharpen = True
+                        )
                         if self._validate_frame(frame, "captured_frame"):
                             frame_copy = frame.copy()
                             
@@ -1141,21 +1468,6 @@ class CameraProcessor:
                                     except Exception as ex:
                                         print(f"❌ Error submitting task: {ex}")
                                         inference_semaphore.release()
-
-                            # Save periodic ROI fallback snapshot for admin panel ROI editor fallback
-                            try:
-                                current_time = time.time()
-                                if current_time - self.last_roi_snapshot_time >= self.roi_snapshot_interval:
-                                    snapshot_path = os.path.join(self.roi_snapshot_dir, f"{self.camera_id}.jpg")
-                                    # Copy frame to protect from mutation before writing
-                                    snapshot_frame = frame_copy.copy()
-                                    self.api_thread_pool.submit(cv2.imwrite, snapshot_path, snapshot_frame)
-                                    self.last_roi_snapshot_time = current_time
-                            except Exception as e:
-                                if self.headless_mode:
-                                    logging.warning(f"[{self.name}] Failed to save ROI snapshot: {e}")
-                                else:
-                                    print(f"⚠️ [{self.name}] Failed to save ROI snapshot: {e}")
                         else:
                             if logging.getLogger().isEnabledFor(logging.DEBUG):
                                 logging.debug(f"[{self.name}] Skipping corrupted frame (H.264 decode error)")
@@ -1540,14 +1852,10 @@ class CameraProcessor:
             if isinstance(full_frame_annotated, np.ndarray):
                 frame_copy = full_frame_annotated.copy()
                 
-                # Define helper for async writing of annotated frame and thumbnail
+                # Define helper for async writing of annotated frame
                 def async_write_task(path, img):
                     try:
                         cv2.imwrite(path, img, [cv2.IMWRITE_WEBP_QUALITY, 80])
-                        # Generate thumbnail
-                        thumb_path = path.replace('_ann.webp', '_ann_thumb.webp')
-                        thumb = cv2.resize(img, (140, 80))
-                        cv2.imwrite(thumb_path, thumb, [cv2.IMWRITE_WEBP_QUALITY, 70])
                     except Exception as ex:
                         logging.error(f"Error in async_write_task: {ex}")
                 

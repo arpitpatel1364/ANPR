@@ -89,7 +89,7 @@ def add_plate():
         return redirect(url_for('plate.plates'))
 
     # Simple license plate format validation
-    plate_pattern = re.compile(r'^[A-Z]{2}[0-9]{2}[A-Z]{2}[0-9]{4}$')
+    plate_pattern = re.compile(r'^[A-Z]{2}[0-9]{2}[A-Z]{1,3}[0-9]{1,4}$|^[0-9]{2}BH[0-9]{4}[A-Z]{1,2}$')
 
     if not plate_pattern.match(plate):
         flash(
