@@ -4,18 +4,22 @@
 {% block page_title %}System Settings{% endblock %}
 {% block page_subtitle %}Manage global application configurations{% endblock %}
 
+{% block extra_css %}
+<link href="{{ url_for('static', filename='css/settings.css') }}" rel="stylesheet">
+{% endblock %}
+
 {% block content %}
 <div class="row">
-    <div class="col-12">
-        <div class="card shadow-sm border-0 mb-4">
-            <div class="card-header bg-white border-bottom py-3">
-                <h5 class="mb-0 text-primary"><i class="bi bi-gear-fill me-2"></i>Global Settings</h5>
+    <div class="col-lg-10 mx-auto">
+        <div class="card settings-card mb-5">
+            <div class="card-header settings-header">
+                <h5 class="mb-0"><i class="bi bi-gear-fill me-2"></i>Global Settings</h5>
             </div>
-            <div class="card-body">
+            <div class="card-body p-4 p-md-5">
                 <form action="{{ url_for('settings.settings') }}" method="POST">
 
 
-                    <h6 class="mb-3 text-muted border-bottom pb-2">Global Settings</h6>
+                    <h6 class="settings-section-title">Performance Settings</h6>
                     <div class="row mb-4">
                         <div class="col-md-6 mb-3">
                             <label class="form-label">FPS Limit</label>
@@ -29,7 +33,7 @@
                         </div>
                     </div>
 
-                    <h6 class="mb-3 text-muted border-bottom pb-2">Display Settings</h6>
+                    <h6 class="settings-section-title">Display Settings</h6>
                     <div class="row mb-4">
                         <div class="col-md-6 mb-3">
                             <label class="form-label">Window Title</label>
@@ -47,50 +51,53 @@
                                     %}>3x3</option>
                             </select>
                         </div>
-                        <div class="col-md-3 mb-3">
-                            <div class="form-check form-switch mt-4">
-                                <input class="form-check-input" type="checkbox" name="display_headless_mode"
-                                    id="display_headless_mode" {% if config.display_settings.headless_mode %}checked{%
-                                    endif %}>
-                                <label class="form-check-label" for="display_headless_mode">Headless Mode</label>
-                            </div>
-                        </div>
-                        <div class="col-md-3 mb-3">
-                            <div class="form-check form-switch mt-4">
-                                <input class="form-check-input" type="checkbox" name="display_show_fps"
-                                    id="display_show_fps" {% if config.display_settings.show_fps %}checked{% endif %}>
-                                <label class="form-check-label" for="display_show_fps">Show FPS</label>
-                            </div>
-                        </div>
-                        <div class="col-md-3 mb-3">
-                            <div class="form-check form-switch mt-4">
-                                <input class="form-check-input" type="checkbox" name="display_show_plate_count"
-                                    id="display_show_plate_count" {% if config.display_settings.show_plate_count
-                                    %}checked{% endif %}>
-                                <label class="form-check-label" for="display_show_plate_count">Show Plate Count</label>
-                            </div>
-                        </div>
-                        <div class="col-md-3 mb-3">
-                            <div class="form-check form-switch mt-4">
-                                <input class="form-check-input" type="checkbox" name="display_show_verification_stats"
-                                    id="display_show_verification_stats" {% if
-                                    config.display_settings.show_verification_stats %}checked{% endif %}>
-                                <label class="form-check-label" for="display_show_verification_stats">Show Verification
-                                    Stats</label>
-                            </div>
-                        </div>
-                        <div class="col-md-3 mb-3">
-                            <div class="form-check form-switch mt-4">
-                                <input class="form-check-input" type="checkbox" name="display_show_camera_names"
-                                    id="display_show_camera_names" {% if config.display_settings.show_camera_names
-                                    %}checked{% endif %}>
-                                <label class="form-check-label" for="display_show_camera_names">Show Camera
-                                    Names</label>
+                        <div class="col-md-12 mt-3 mb-2">
+                            <h6 class="text-muted small text-uppercase mb-3">Toggles</h6>
+                            <div class="row">
+                                <div class="col-md-4 col-sm-6 mb-4">
+                                    <div class="form-check form-switch ps-5">
+                                        <input class="form-check-input" type="checkbox" name="display_headless_mode"
+                                            id="display_headless_mode" {% if config.display_settings.headless_mode %}checked{%
+                                            endif %}>
+                                        <label class="form-check-label" for="display_headless_mode">Headless Mode</label>
+                                    </div>
+                                </div>
+                                <div class="col-md-4 col-sm-6 mb-4">
+                                    <div class="form-check form-switch ps-5">
+                                        <input class="form-check-input" type="checkbox" name="display_show_fps"
+                                            id="display_show_fps" {% if config.display_settings.show_fps %}checked{% endif %}>
+                                        <label class="form-check-label" for="display_show_fps">Show FPS</label>
+                                    </div>
+                                </div>
+                                <div class="col-md-4 col-sm-6 mb-4">
+                                    <div class="form-check form-switch ps-5">
+                                        <input class="form-check-input" type="checkbox" name="display_show_plate_count"
+                                            id="display_show_plate_count" {% if config.display_settings.show_plate_count
+                                            %}checked{% endif %}>
+                                        <label class="form-check-label" for="display_show_plate_count">Show Plate Count</label>
+                                    </div>
+                                </div>
+                                <div class="col-md-4 col-sm-6 mb-4">
+                                    <div class="form-check form-switch ps-5">
+                                        <input class="form-check-input" type="checkbox" name="display_show_verification_stats"
+                                            id="display_show_verification_stats" {% if
+                                            config.display_settings.show_verification_stats %}checked{% endif %}>
+                                        <label class="form-check-label" for="display_show_verification_stats">Show Verification Stats</label>
+                                    </div>
+                                </div>
+                                <div class="col-md-4 col-sm-6 mb-4">
+                                    <div class="form-check form-switch ps-5">
+                                        <input class="form-check-input" type="checkbox" name="display_show_camera_names"
+                                            id="display_show_camera_names" {% if config.display_settings.show_camera_names
+                                            %}checked{% endif %}>
+                                        <label class="form-check-label" for="display_show_camera_names">Show Camera Names</label>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
 
-                    <h6 class="mb-3 text-muted border-bottom pb-2">Headless Settings</h6>
+                    <h6 class="settings-section-title mt-5">Headless Operations</h6>
                     <div class="row mb-4">
                         <div class="col-md-4 mb-3">
                             <label class="form-label">Log Level</label>
@@ -116,25 +123,30 @@
                                 value="{{ config.headless_settings.status_update_interval|default(10) }}">
                         </div>
 
-                        <div class="col-md-3 mb-3">
-                            <div class="form-check form-switch mt-4">
-                                <input class="form-check-input" type="checkbox" name="headless_enabled"
-                                    id="headless_enabled" {% if config.headless_settings.enabled %}checked{% endif %}>
-                                <label class="form-check-label" for="headless_enabled">Headless Enabled</label>
-                            </div>
-                        </div>
-                        <div class="col-md-3 mb-3">
-                            <div class="form-check form-switch mt-4">
-                                <input class="form-check-input" type="checkbox" name="headless_save_frames"
-                                    id="headless_save_frames" {% if config.headless_settings.save_frames %}checked{%
-                                    endif %}>
-                                <label class="form-check-label" for="headless_save_frames">Save Frames</label>
+                        <div class="col-md-12 mt-3">
+                            <h6 class="text-muted small text-uppercase mb-3">Headless Toggles</h6>
+                            <div class="row">
+                                <div class="col-md-4 col-sm-6 mb-4">
+                                    <div class="form-check form-switch ps-5">
+                                        <input class="form-check-input" type="checkbox" name="headless_enabled"
+                                            id="headless_enabled" {% if config.headless_settings.enabled %}checked{% endif %}>
+                                        <label class="form-check-label" for="headless_enabled">Headless Enabled</label>
+                                    </div>
+                                </div>
+                                <div class="col-md-4 col-sm-6 mb-4">
+                                    <div class="form-check form-switch ps-5">
+                                        <input class="form-check-input" type="checkbox" name="headless_save_frames"
+                                            id="headless_save_frames" {% if config.headless_settings.save_frames %}checked{%
+                                            endif %}>
+                                        <label class="form-check-label" for="headless_save_frames">Save Frames</label>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
 
-                    <div class="d-flex justify-content-end mt-4">
-                        <button type="submit" class="btn btn-primary px-4"><i class="bi bi-save me-2"></i>Save
+                    <div class="d-flex justify-content-end mt-5 pt-3 border-top">
+                        <button type="submit" class="btn btn-primary btn-save-settings"><i class="bi bi-save me-2"></i>Save
                             Settings</button>
                     </div>
                 </form>
