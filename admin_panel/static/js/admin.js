@@ -347,15 +347,13 @@ function stopConnectionHealthCheck() {
 
 // Manual reconnection function
 function manualReconnect() {
-    console.log('Manual reconnection requested');
-    reconnectAttempts = 0; // Reset attempts for manual reconnect
+    console.log('Manual reconnection requested, reloading page...');
     
-    if (socket) {
-        socket.disconnect();
-        socket.connect();
-    } else {
-        initializeWebSocket();
-    }
+    // Update connection status to give user feedback
+    updateConnectionStatus('connecting', 'Reloading...');
+    
+    // Hard reload the page to ensure all UI and data are completely refreshed
+    window.location.reload();
 }
 
 // Get connection status
