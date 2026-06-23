@@ -20,7 +20,7 @@ class ANPRInterface:
         self.config_path = None # Removed file based config
         self.allowed_plates_path = '../allowed_plates.json'
         self.detections_path = '../plate_detections.csv'
-        self.service_name = 'anpr-multi-camera-temp'
+        self.service_name = 'anpr-multi-camera'
         self.config_lock = threading.Lock()
     
     def get_config(self) -> Dict[str, Any]:
