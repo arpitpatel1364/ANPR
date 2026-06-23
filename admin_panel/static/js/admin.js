@@ -1000,8 +1000,9 @@ function controlANPRService(action) {
     const button = document.getElementById(action + 'ServiceBtn');
     const originalText = button.innerHTML;
     
-    // Show loading state
-    button.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Processing...';
+    // Show loading state with a spinner but keep the original text length
+    const actionText = action.charAt(0).toUpperCase() + action.slice(1);
+    button.innerHTML = `<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>${actionText}`;
     button.disabled = true;
     
     fetch('/api/service/control', {

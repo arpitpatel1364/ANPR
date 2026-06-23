@@ -102,6 +102,7 @@ import torch
 import re
 import numpy as np
 import time
+import threading
 from threading import Thread, Lock
 
 from collections import Counter, defaultdict
@@ -280,8 +281,8 @@ def enhance_frame_if_dark(frame,
 import queue
 import concurrent.futures
 from plate_logger import PlateLogger, _PLATE_CACHE, _cache_lock
-import requests
-from requests.auth import HTTPDigestAuth
+import httpx
+import asyncio
 import logging
 import signal
 import torch
@@ -812,8 +813,17 @@ INDIAN_PLATE_REGEX = re.compile(
     r')$'
 )
 
-# Global ThreadPool for API calls and async writes to prevent thread bloat
+# Global ThreadPool for async writes to prevent thread bloat
 api_thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=5)
+
+# Async API Event Loop setup
+api_event_loop = asyncio.new_event_loop()
+def _run_api_loop(loop):
+    asyncio.set_event_loop(loop)
+    loop.run_forever()
+
+api_loop_thread = threading.Thread(target=_run_api_loop, args=(api_event_loop,), daemon=True)
+api_loop_thread.start()
 
 # Global processing threads
 processor_thread = None
@@ -1213,8 +1223,8 @@ class CameraProcessor:
             ocr_result.append(inner_list)
         return ocr_result
 
-    def make_api_call(self, plate_text, verification_status):
-        """Make API calls for this specific camera"""
+    async def async_make_api_call(self, plate_text, verification_status):
+        """Make API calls for this specific camera using async httpx"""
         try:
             success_count = 0
             username = self.api_settings.get('username', 'admin')
@@ -1239,60 +1249,62 @@ class CameraProcessor:
 
             mode1_success = False
 
-            # Mode 1 - First attempt
-            try:
-                url1 = f"{base_url}?action=setConfig&AlarmOut[0].Mode=1"
-                response1 = requests.get(url1, auth=HTTPDigestAuth(username, password), timeout=timeout)
-
-                if response1.status_code == 200:
-                    if self.headless_mode:
-                        logging.info(f"[{self.name}] API call 1 successful for plate: {plate_text} (Status: {verification_status}) - Mode=1")
-                    else:
-                        print(f"✅ [{self.name}] API call 1 successful for plate: {plate_text} (Status: {verification_status}) - Mode=1")
-                    success_count += 1
-                    mode1_success = True
-                else:
-                    if self.headless_mode:
-                        logging.warning(f"[{self.name}] API call 1 failed for plate: {plate_text} - Status code: {response1.status_code} - Mode=1")
-                    else:
-                        print(f"❌ [{self.name}] API call 1 failed for plate: {plate_text} - Status code: {response1.status_code} - Mode=1")
-
-            except Exception as e:
-                print(f"❌ [{self.name}] API call 1 error for plate: {plate_text} - {str(e)} - Mode=1")
-
-            # Mode 2 - Must be hit if Mode 1 succeeded
-            if mode1_success:
-                if self.headless_mode:
-                    logging.info(f"[{self.name}] Mode 1 succeeded, ensuring Mode 2 is hit for plate: {plate_text}")
-                else:
-                    print(f"🔄 [{self.name}] Mode 1 succeeded, ensuring Mode 2 is hit for plate: {plate_text}")
-
-            retry_count = max_retries if mode1_success else 1
-
-            for retry in range(retry_count):
+            async with httpx.AsyncClient(verify=False) as client:
+                auth = httpx.DigestAuth(username, password)
+                # Mode 1 - First attempt
                 try:
-                    url2 = f"{base_url}?action=setConfig&AlarmOut[0].Mode=2"
-                    response2 = requests.get(url2, auth=HTTPDigestAuth(username, password), timeout=timeout)
+                    url1 = f"{base_url}?action=setConfig&AlarmOut[0].Mode=1"
+                    response1 = await client.get(url1, auth=auth, timeout=timeout)
 
-                    if response2.status_code == 200:
+                    if response1.status_code == 200:
                         if self.headless_mode:
-                            logging.info(f"[{self.name}] API call 2 successful for plate: {plate_text} (Status: {verification_status}) - Mode=2")
+                            logging.info(f"[{self.name}] API call 1 successful for plate: {plate_text} (Status: {verification_status}) - Mode=1")
                         else:
-                            print(f"✅ [{self.name}] API call 2 successful for plate: {plate_text} (Status: {verification_status}) - Mode=2")
+                            print(f"✅ [{self.name}] API call 1 successful for plate: {plate_text} (Status: {verification_status}) - Mode=1")
                         success_count += 1
-                        break
+                        mode1_success = True
                     else:
                         if self.headless_mode:
-                            logging.warning(f"[{self.name}] API call 2 failed for plate: {plate_text} - Status code: {response2.status_code} - Mode=2 (Retry {retry + 1}/{retry_count})")
+                            logging.warning(f"[{self.name}] API call 1 failed for plate: {plate_text} - Status code: {response1.status_code} - Mode=1")
                         else:
-                            print(f"❌ [{self.name}] API call 2 failed for plate: {plate_text} - Status code: {response2.status_code} - Mode=2 (Retry {retry + 1}/{retry_count})")
-                        if retry < retry_count - 1:
-                            time.sleep(0.5)
+                            print(f"❌ [{self.name}] API call 1 failed for plate: {plate_text} - Status code: {response1.status_code} - Mode=1")
 
                 except Exception as e:
-                    print(f"❌ [{self.name}] API call 2 error for plate: {plate_text} - {str(e)} - Mode=2 (Retry {retry + 1}/{retry_count})")
-                    if retry < retry_count - 1:
-                        time.sleep(0.5)
+                    print(f"❌ [{self.name}] API call 1 error for plate: {plate_text} - {str(e)} - Mode=1")
+
+                # Mode 2 - Must be hit if Mode 1 succeeded
+                if mode1_success:
+                    if self.headless_mode:
+                        logging.info(f"[{self.name}] Mode 1 succeeded, ensuring Mode 2 is hit for plate: {plate_text}")
+                    else:
+                        print(f"🔄 [{self.name}] Mode 1 succeeded, ensuring Mode 2 is hit for plate: {plate_text}")
+
+                retry_count = max_retries if mode1_success else 1
+
+                for retry in range(retry_count):
+                    try:
+                        url2 = f"{base_url}?action=setConfig&AlarmOut[0].Mode=2"
+                        response2 = await client.get(url2, auth=auth, timeout=timeout)
+
+                        if response2.status_code == 200:
+                            if self.headless_mode:
+                                logging.info(f"[{self.name}] API call 2 successful for plate: {plate_text} (Status: {verification_status}) - Mode=2")
+                            else:
+                                print(f"✅ [{self.name}] API call 2 successful for plate: {plate_text} (Status: {verification_status}) - Mode=2")
+                            success_count += 1
+                            break
+                        else:
+                            if self.headless_mode:
+                                logging.warning(f"[{self.name}] API call 2 failed for plate: {plate_text} - Status code: {response2.status_code} - Mode=2 (Retry {retry + 1}/{retry_count})")
+                            else:
+                                print(f"❌ [{self.name}] API call 2 failed for plate: {plate_text} - Status code: {response2.status_code} - Mode=2 (Retry {retry + 1}/{retry_count})")
+                            if retry < retry_count - 1:
+                                await asyncio.sleep(0.5)
+
+                    except Exception as e:
+                        print(f"❌ [{self.name}] API call 2 error for plate: {plate_text} - {str(e)} - Mode=2 (Retry {retry + 1}/{retry_count})")
+                        if retry < retry_count - 1:
+                            await asyncio.sleep(0.5)
 
             return success_count > 0
 
@@ -1301,11 +1313,14 @@ class CameraProcessor:
             return False
 
     def trigger_api_call(self, plate_text, verification_status):
-        """Trigger API call in a separate thread"""
+        """Trigger API call asynchronously"""
         try:
-            self.make_api_call(plate_text, verification_status)
+            asyncio.run_coroutine_threadsafe(
+                self.async_make_api_call(plate_text, verification_status),
+                api_event_loop
+            )
         except Exception as e:
-            print(f"❌ [{self.name}] Error triggering API call: {str(e)}")
+            print(f"❌ [{self.name}] Error scheduling async API call: {str(e)}")
 
     def _validate_frame(self, frame, frame_name="frame"):
         """Validate frame before processing"""
@@ -1454,7 +1469,7 @@ class CameraProcessor:
                         )
 
                         if verification_status == "VERIFIED" and self.api_enabled:
-                            api_thread_pool.submit(self.trigger_api_call, license_plate_text, verification_status)
+                            self.trigger_api_call(license_plate_text, verification_status)
                         else:
                             if not self.api_enabled:
                                 if not self.headless_mode:
@@ -1635,9 +1650,19 @@ class CameraProcessor:
                         enable_sharpen = True
                     )
                     
-                    # Dynamic FPS Throttling (Section 2.3)
+                    # Save ROI snapshot periodically
                     import psutil
                     current_time = time.time()
+                    if self.roi_snapshot_interval > 0:
+                        if current_time - self.last_roi_snapshot_time > self.roi_snapshot_interval:
+                            self.last_roi_snapshot_time = current_time
+                            try:
+                                snapshot_path = os.path.join(self.roi_snapshot_dir, f"{self.camera_id}.jpg")
+                                cv2.imwrite(snapshot_path, frame_copy)
+                            except Exception:
+                                pass
+                                
+                    # Dynamic FPS Throttling (Section 2.3)
                     if not hasattr(self, '_last_cpu_check') or current_time - self._last_cpu_check > 2.0:
                         self._last_cpu_check = current_time
                         self._cpu_usage = psutil.cpu_percent(interval=None)

@@ -45,8 +45,8 @@ run_backend() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] Current user: $(whoami)" >> "$LOG_FILE"
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting ANPR Multi-Camera Service..." | tee -a "$LOG_FILE"
     
-    if [ ! -f "plate_logger.py" ]; then
-        echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: plate_logger.py not found!" | tee -a "$LOG_FILE"
+    if [ ! -f "app_multi_camera_lprnet.py" ]; then
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: app_multi_camera_lprnet.py not found!" | tee -a "$LOG_FILE"
         exit 1
     fi
     

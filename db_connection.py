@@ -61,6 +61,23 @@ def get_connection_pool() -> Optional[pooling.MySQLConnectionPool]:
                 try:
                     db_config = load_db_config()
                     
+                    # Ensure database exists first
+                    try:
+                        temp_config = db_config.copy()
+                        db_name = temp_config.pop('database', 'anpr_system')
+                        temp_config.pop('pool_name', None)
+                        temp_config.pop('pool_size', None)
+                        temp_config.pop('pool_reset_session', None)
+                        
+                        temp_conn = mysql.connector.connect(**temp_config)
+                        temp_cursor = temp_conn.cursor()
+                        temp_cursor.execute(f"CREATE DATABASE IF NOT EXISTS {db_name} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci")
+                        temp_cursor.close()
+                        temp_conn.close()
+                        print(f"✅ Verified database '{db_name}' exists")
+                    except Error as e:
+                        print(f"⚠️ Could not verify/create database before pool: {e}")
+                    
                     # Extract pool-specific config
                     pool_config = {
                         'host': db_config.get('host', 'localhost'),

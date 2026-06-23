@@ -33,6 +33,40 @@ function install_system_deps() {
     fi
 }
 
+function check_dependencies() {
+    info "Checking core dependencies..."
+    
+    # Check Python 3
+    if ! command -v $PYTHON_BIN &> /dev/null; then
+        die "Python 3 is not installed or not in PATH. Please install python3."
+    fi
+    info "Found Python: $($PYTHON_BIN --version)"
+    
+    # Check pip
+    if ! $PYTHON_BIN -m pip --version &> /dev/null; then
+        warn "pip is not installed. Attempting to install python3-pip..."
+        if command -v apt-get &>/dev/null; then
+            apt-get install -y python3-pip || die "Failed to install pip. Please install it manually."
+        else
+            die "Cannot automatically install pip. Please install python3-pip manually."
+        fi
+    fi
+    info "Found pip: $($PYTHON_BIN -m pip --version | awk '{print $1" "$2}')"
+    
+    # Check venv
+    if ! $PYTHON_BIN -m venv -h &> /dev/null; then
+        warn "python3-venv is not installed. Attempting to install..."
+        if command -v apt-get &>/dev/null; then
+            apt-get install -y python3-venv || die "Failed to install venv. Please install python3-venv manually."
+        else
+            die "Cannot automatically install venv. Please install python3-venv manually."
+        fi
+    fi
+    info "Found venv module"
+    
+    info "All core dependencies are satisfied!"
+}
+
 function create_python_env() {
     info "Setting up Python virtual environment"
     if [ ! -d "$VENV_DIR" ]; then
@@ -57,8 +91,23 @@ function create_python_env() {
     fi
 }
 
+function check_xampp() {
+    info "Checking if MySQL/XAMPP is running..."
+    if ! pgrep -x "mysqld" > /dev/null; then
+        if [ -x /opt/lampp/lampp ]; then
+            warn "MySQL is not running. Attempting to start XAMPP MySQL..."
+            /opt/lampp/lampp startmysql || warn "Could not start XAMPP MySQL automatically."
+        else
+            warn "MySQL (mysqld) doesn't appear to be running. Please start XAMPP or your database service."
+        fi
+    else
+        info "MySQL service is running."
+    fi
+}
+
 function init_database() {
-    info "Initializing database"
+    check_xampp
+    info "Initializing database (creating database & tables)"
     if [ -f "scripts/init_database.py" ]; then
         source "$VENV_DIR/bin/activate"
         python scripts/init_database.py || warn "Database init failed"
@@ -188,8 +237,9 @@ ANPR System Setup
 Usage: sudo ./setup.sh [COMMAND]
 
 Commands:
-  all       Perform all setup steps (deps, env, db, admin user, services)
+  all       Perform all setup steps (deps, check, env, db, admin user, services)
   deps      Install system dependencies (apt-get)
+  check     Check core python dependencies (python3, pip, venv)
   env       Create Python virtual environment and install requirements
   db        Initialize the database schema
   admin     Create an administrator user
@@ -210,6 +260,7 @@ case "$1" in
     all)
         ensure_root
         install_system_deps
+        check_dependencies
         create_python_env
         init_database
         create_admin_user
@@ -221,7 +272,12 @@ case "$1" in
         ensure_root
         install_system_deps
         ;;
+    check)
+        ensure_root
+        check_dependencies
+        ;;
     env)
+        check_dependencies
         create_python_env
         ;;
     db)
