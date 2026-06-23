@@ -144,6 +144,37 @@ def delete_plate():
     
     return redirect(url_for('plate.plates'))
 
+@plate_bp.route('/plates/edit', methods=['POST'])
+def edit_plate():
+    """Edit plate"""
+    old_plate = request.form.get('old_plate', '').strip().upper()
+    new_plate = request.form.get('new_plate', '').strip().upper()
+    
+    if not old_plate or not new_plate:
+        flash('Both old and new plate numbers are required!', 'error')
+        return redirect(url_for('plate.plates'))
+        
+    plate_pattern = re.compile(r'^[A-Z]{2}[0-9]{2}[A-Z]{1,3}[0-9]{1,4}$|^[0-9]{2}BH[0-9]{4}[A-Z]{1,2}$')
+    if not plate_pattern.match(new_plate):
+        flash('Invalid plate format!', 'error')
+        return redirect(url_for('plate.plates'))
+        
+    try:
+        with DatabaseConnection() as db:
+            db.execute("UPDATE allowed_plates SET license_plate = %s WHERE license_plate = %s", (new_plate, old_plate))
+            if db.cursor.rowcount > 0:
+                flash(f'Plate {old_plate} updated to {new_plate} successfully!', 'success')
+                broadcast_reload_plates()
+            else:
+                flash(f'Plate {old_plate} not found!', 'error')
+    except Exception as e:
+        if 'Duplicate entry' in str(e):
+            flash(f'Plate {new_plate} already exists!', 'error')
+        else:
+            flash(f'Error updating plate: {str(e)}', 'error')
+            
+    return redirect(url_for('plate.plates'))
+
 @plate_bp.route('/plates/bulk_add', methods=['POST'])
 def bulk_add_plates():
     """Bulk add plates from text input"""

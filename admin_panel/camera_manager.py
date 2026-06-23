@@ -350,125 +350,6 @@ def get_all_cameras_status():
             'error': str(e)
         }), 500
 
-@camera_bp.route('/cameras/set_roi/<camera_id>', methods=['POST'])
-def set_camera_roi(camera_id):
-    """Capture latest frame for ROI selection with timeout protection"""
-    import sys
-    import os
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-    import cv2
-    import base64
-    import threading
-    
-    config = load_config_from_db()
-    cameras = config.get('cameras', []) if config else []
-    camera_cfg = next((cam for cam in cameras if cam.get('id') == camera_id), None)
-
-    if camera_cfg is None:
-        return jsonify({'success': False, 'message': 'Camera not found'}), 404
-
-    try:
-        # First, try to use cached snapshot (fastest path)
-        snapshot_dir = os.path.join(os.path.dirname(__file__), 'static', 'images', 'roi_snapshots')
-        snapshot_path = os.path.join(snapshot_dir, f'{camera_id}.jpg')
-        
-        import time
-        # Wait up to 3 seconds for the background process to create the snapshot
-        for _ in range(15):
-            if os.path.exists(snapshot_path):
-                break
-            time.sleep(0.2)
-            
-        if os.path.exists(snapshot_path):
-            frame = cv2.imread(snapshot_path)
-            if frame is not None and frame.size > 0:
-                # Use cached snapshot - much faster than opening RTSP stream
-                _, buffer = cv2.imencode('.jpg', frame)
-                frame_b64 = base64.b64encode(buffer).decode('utf-8')
-                
-                return jsonify({
-                    'success': True,
-                    'mode': 'web_roi',
-                    'frame': frame_b64,
-                    'camera_id': camera_id,
-                    'camera_name': camera_cfg.get('name', 'Unknown Camera'),
-                    'frame_width': int(frame.shape[1]),
-                    'frame_height': int(frame.shape[0]),
-                    'message': 'Frame loaded from cache. Use the web interface to set ROI.'
-                })
-        
-        # If no cached snapshot, try to capture fresh frame with timeout protection
-        rtsp_source = camera_cfg.get('rtsp_source')
-        if rtsp_source is None or (isinstance(rtsp_source, str) and rtsp_source.strip() == ""):
-            return jsonify({'success': False, 'message': 'No RTSP source configured for this camera'}), 400
-
-        frame_container = {'frame': None, 'cap': None}
-        capture_timeout = 10  # 10 second timeout for frame capture
-        
-        def capture_frame_with_timeout():
-            """Capture frame in a separate thread with timeout"""
-            try:
-                if isinstance(rtsp_source, int) or (isinstance(rtsp_source, str) and rtsp_source.isdigit()):
-                    cap = cv2.VideoCapture(int(rtsp_source))
-                else:
-                    cap = cv2.VideoCapture(rtsp_source, cv2.CAP_FFMPEG)
-                frame_container['cap'] = cap
-                
-                # Set minimal properties to speed up connection
-                try:
-                    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-                except:
-                    pass
-                
-                if not cap or not cap.isOpened():
-                    return
-                
-                # Try to read one frame
-                ret, captured_frame = cap.read()
-                if ret and captured_frame is not None and captured_frame.size > 0:
-                    frame_container['frame'] = captured_frame
-            except Exception as e:
-                pass  # Silently fail in timeout thread
-            finally:
-                # Release capture in thread
-                if frame_container['cap'] is not None:
-                    try:
-                        frame_container['cap'].release()
-                    except:
-                        pass
-        
-        # Run frame capture with timeout
-        capture_thread = threading.Thread(target=capture_frame_with_timeout, daemon=True)
-        capture_thread.start()
-        capture_thread.join(timeout=capture_timeout)  # Wait max 5 seconds
-        
-        frame = frame_container['frame']
-        
-        if frame is None:
-            return jsonify({
-                'success': False, 
-                'message': f'Unable to capture frame from camera stream (timeout after {capture_timeout}s). Please ensure RTSP stream is accessible.'
-            }), 500
-
-        # Convert frame to base64 for web display
-        _, buffer = cv2.imencode('.jpg', frame)
-        frame_b64 = base64.b64encode(buffer).decode('utf-8')
-        
-        return jsonify({
-            'success': True,
-            'mode': 'web_roi',
-            'frame': frame_b64,
-            'camera_id': camera_id,
-            'camera_name': camera_cfg.get('name', 'Unknown Camera'),
-            'frame_width': int(frame.shape[1]),
-            'frame_height': int(frame.shape[0]),
-            'message': 'Frame captured successfully. Use the web interface to set ROI.'
-        })
-
-    except Exception as e:
-        return jsonify({'success': False, 'message': f'Error capturing frame: {str(e)[:100]}'}), 500
-
-
 @camera_bp.route('/cameras/save_roi/<camera_id>', methods=['POST'])
 def save_camera_roi(camera_id):
     """Save ROI coordinates from web-based selection"""
@@ -489,32 +370,21 @@ def save_camera_roi(camera_id):
     try:
         config = load_config_from_db()
         cameras = config.get('cameras', []) if config else [] if config else []
-        camera_cfg = next((cam for cam in cameras if cam.get('id') == camera_id), None)
+        camera_cfg = next((cam for cam in cameras if str(cam.get('id')) == str(camera_id)), None)
 
         if camera_cfg is None:
             return jsonify({'success': False, 'message': 'Camera not found'}), 404
 
         # Update camera configuration
         update_data = {}
-        if roi_type == 'rectangle':
-            if len(coordinates) == 4:
-                update_data['roi'] = {
-                    'x1': int(coordinates[0]),
-                    'y1': int(coordinates[1]),
-                    'x2': int(coordinates[2]),
-                    'y2': int(coordinates[3])
-                }
-                update_data['roi_polygon'] = []
-            else:
-                return jsonify({'success': False, 'message': 'Invalid rectangle coordinates'}), 400
-        elif roi_type == 'polygon':
+        if roi_type == 'polygon':
             if len(coordinates) >= 3:
                 update_data['roi_polygon'] = [{'x': int(pt[0]), 'y': int(pt[1])} for pt in coordinates]
                 update_data['roi'] = None
             else:
                 return jsonify({'success': False, 'message': 'Polygon must have at least 3 points'}), 400
         else:
-            return jsonify({'success': False, 'message': 'Invalid ROI type'}), 400
+            return jsonify({'success': False, 'message': 'Invalid ROI type. Only polygon is supported.'}), 400
 
         if update_camera_in_db(camera_id, update_data):
             return jsonify({

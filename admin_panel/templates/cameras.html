@@ -850,23 +850,10 @@ function showWebRoiModal(frameData, cameraId, cameraName, isNewCamera = false) {
                         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
                     </div>
                     <div class="modal-body" style="padding: 1.5rem;">
-                        <div class="mb-4">
-                            <label class="form-label fw-bold mb-2"><i class="bi bi-tools me-2"></i>Drawing Mode</label>
-                            <div class="btn-group w-100" role="group" aria-label="ROI Type">
-                                <input type="radio" class="btn-check" name="roiType" id="rectangleMode" autocomplete="off" checked>
-                                <label class="btn btn-outline-success" for="rectangleMode" style="flex: 1;">
-                                    <i class="bi bi-bounding-box me-1"></i>Rectangle
-                                </label>
-                                <input type="radio" class="btn-check" name="roiType" id="polygonMode" autocomplete="off">
-                                <label class="btn btn-outline-success" for="polygonMode" style="flex: 1;">
-                                    <i class="bi bi-diagram-2 me-1"></i>Polygon
-                                </label>
-                            </div>
-                        </div>
                         <div class="mb-3 p-3" style="background-color: #f8f9fa; border-radius: 0.375rem; border-left: 4px solid #198754;">
                             <small class="text-muted d-block">
                                 <i class="bi bi-info-circle me-2"></i>
-                                <span id="instructions">Click and drag to draw a rectangle, or click points for polygon. Press SPACE to save.</span>
+                                <span id="instructions">Click to add points for the polygon ROI. Click the first point again to close the polygon and save automatically.</span>
                             </small>
                         </div>
                         <div class="position-relative d-inline-block" style="border: 2px dashed #dee2e6; border-radius: 0.375rem; overflow: hidden;">
@@ -905,11 +892,10 @@ function showWebRoiModal(frameData, cameraId, cameraName, isNewCamera = false) {
     let originalWidth = 0;
     let originalHeight = 0;
 
-    let roiType = 'rectangle';
+    let roiType = 'polygon';
     let isDrawing = false;
-    let startX, startY;
     let points = [];
-    let rectangle = null;
+    let mouseX = -1, mouseY = -1;
 
     img.onload = function() {
         originalWidth = img.width;
@@ -926,28 +912,21 @@ function showWebRoiModal(frameData, cameraId, cameraName, isNewCamera = false) {
 
         redrawCanvas();
     };
-    if (isNewCamera) {
+    
+    // Always use frameData if provided (e.g. for new cameras), otherwise fetch from live snapshots
+    if (frameData) {
         img.src = 'data:image/jpeg;base64,' + frameData;
     } else {
-        img.src = `/api/cameras/${cameraId}/snapshot`;
+        img.src = `/static/images/roi_snapshots/${cameraId}.jpg?t=${Date.now()}`;
+        
+        // Add error handler in case snapshot doesn't exist
+        img.onerror = function() {
+            console.error('Snapshot not found. Waiting for backend to capture live frame...');
+            setTimeout(() => {
+                img.src = `/static/images/roi_snapshots/${cameraId}.jpg?t=${Date.now()}`;
+            }, 2000);
+        };
     }
-
-    // ROI type selection
-    document.getElementById('rectangleMode').addEventListener('change', function() {
-        roiType = 'rectangle';
-        points = [];
-        rectangle = null;
-        redrawCanvas();
-        document.getElementById('instructions').textContent = 'Click and drag to draw a rectangle.';
-    });
-
-    document.getElementById('polygonMode').addEventListener('change', function() {
-        roiType = 'polygon';
-        points = [];
-        rectangle = null;
-        redrawCanvas();
-        document.getElementById('instructions').textContent = 'Click to add points. Click first point again to close polygon.';
-    });
 
     // Canvas event listeners
     canvas.addEventListener('mousedown', function(e) {
@@ -955,17 +934,12 @@ function showWebRoiModal(frameData, cameraId, cameraName, isNewCamera = false) {
         const x = e.clientX - rect.left;
         const y = e.clientY - rect.top;
 
-        if (roiType === 'rectangle') {
-            isDrawing = true;
-            startX = x;
-            startY = y;
-            rectangle = { x1: x, y1: y, x2: x, y2: y };
-        } else if (roiType === 'polygon') {
+        if (roiType === 'polygon') {
             // Check if clicking near first point to close polygon
             if (points.length >= 3) {
                 const firstPoint = points[0];
                 const distance = Math.sqrt((x - firstPoint.x) ** 2 + (y - firstPoint.y) ** 2);
-                if (distance < 10) {
+                if (distance < 20) { // Increased hit radius for easier closing
                     // Close polygon
                     savePolygonRoi(cameraId, points);
                     modal.hide();
@@ -973,62 +947,51 @@ function showWebRoiModal(frameData, cameraId, cameraName, isNewCamera = false) {
                 }
             }
             points.push({ x: x, y: y });
-            redrawCanvas();
+            redrawCanvas(x, y);
         }
     });
 
+    // Add mousemove for live preview line
     canvas.addEventListener('mousemove', function(e) {
-        if (!isDrawing || roiType !== 'rectangle') return;
-
-        const rect = canvas.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
-
-        rectangle.x2 = x;
-        rectangle.y2 = y;
-        redrawCanvas();
+        if (roiType === 'polygon' && points.length > 0) {
+            const rect = canvas.getBoundingClientRect();
+            mouseX = e.clientX - rect.left;
+            mouseY = e.clientY - rect.top;
+            redrawCanvas(mouseX, mouseY);
+        }
     });
 
-    canvas.addEventListener('mouseup', function() {
-        if (roiType === 'rectangle') {
-            isDrawing = false;
+    // Double click anywhere to quickly close and save
+    canvas.addEventListener('dblclick', function(e) {
+        if (roiType === 'polygon' && points.length >= 3) {
+            savePolygonRoi(cameraId, points);
+            modal.hide();
         }
     });
 
     // Reset button
     document.getElementById('resetRoi').addEventListener('click', function() {
         points = [];
-        rectangle = null;
         redrawCanvas();
     });
 
     // Save button
     document.getElementById('saveRoi').addEventListener('click', function() {
-        if (roiType === 'rectangle' && rectangle) {
-            saveRectangleRoi(cameraId, rectangle);
-            modal.hide();
-        } else if (roiType === 'polygon' && points.length >= 3) {
+        if (roiType === 'polygon' && points.length >= 3) {
             savePolygonRoi(cameraId, points);
             modal.hide();
         } else {
-            alert('Please complete the ROI selection first.');
+            alert('Please complete the ROI selection first. A polygon needs at least 3 points.');
         }
     });
 
-    function redrawCanvas() {
+    function redrawCanvas(mx = -1, my = -1) {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
 
-        if (roiType === 'rectangle' && rectangle) {
-            ctx.strokeStyle = '#ff0000';
-            ctx.lineWidth = 2;
-            ctx.strokeRect(rectangle.x1, rectangle.y1, rectangle.x2 - rectangle.x1, rectangle.y2 - rectangle.y1);
-            ctx.fillStyle = 'rgba(255, 0, 0, 0.1)';
-            ctx.fillRect(rectangle.x1, rectangle.y1, rectangle.x2 - rectangle.x1, rectangle.y2 - rectangle.y1);
-        } else if (roiType === 'polygon' && points.length > 0) {
+        if (roiType === 'polygon' && points.length > 0) {
             ctx.strokeStyle = '#00ff00';
             ctx.lineWidth = 2;
-            ctx.fillStyle = 'rgba(0, 255, 0, 0.1)';
 
             // Draw lines
             ctx.beginPath();
@@ -1036,31 +999,37 @@ function showWebRoiModal(frameData, cameraId, cameraName, isNewCamera = false) {
             for (let i = 1; i < points.length; i++) {
                 ctx.lineTo(points[i].x, points[i].y);
             }
-            if (points.length >= 3) {
-                ctx.closePath();
-                ctx.fill();
+            
+            // Draw preview line to mouse if moving
+            if (mx !== -1 && my !== -1) {
+                ctx.lineTo(mx, my);
             }
+            
             ctx.stroke();
 
             // Draw points
-            ctx.fillStyle = '#00ff00';
-            points.forEach(point => {
+            points.forEach((point, index) => {
                 ctx.beginPath();
-                ctx.arc(point.x, point.y, 3, 0, 2 * Math.PI);
+                
+                // Highlight first point if hover and enough points
+                if (index === 0 && points.length >= 3 && mx !== -1 && my !== -1) {
+                    const distance = Math.sqrt((mx - point.x) ** 2 + (my - point.y) ** 2);
+                    if (distance < 20) {
+                        ctx.fillStyle = '#ff0000';
+                        ctx.arc(point.x, point.y, 8, 0, 2 * Math.PI);
+                        ctx.fill();
+                        return;
+                    }
+                }
+                
+                ctx.fillStyle = '#00ff00';
+                ctx.arc(point.x, point.y, 4, 0, 2 * Math.PI);
                 ctx.fill();
             });
         }
     }
 
-    function saveRectangleRoi(cameraId, rect) {
-        const coordinates = [
-            Math.round(rect.x1 / imageScale),
-            Math.round(rect.y1 / imageScale),
-            Math.round(rect.x2 / imageScale),
-            Math.round(rect.y2 / imageScale)
-        ];
-        saveRoiToServer(cameraId, 'rectangle', coordinates);
-    }
+
 
     function savePolygonRoi(cameraId, pts) {
         const coordinates = pts.map(p => [
@@ -1176,7 +1145,7 @@ function restartService() {
         const button = event.target;
         const originalText = button.innerHTML;
         
-        button.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Restarting...';
+        button.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>Restarting...';
         button.disabled = true;
         
         fetch('/api/service/control', {
