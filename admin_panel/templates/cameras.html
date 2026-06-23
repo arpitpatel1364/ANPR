@@ -1179,11 +1179,12 @@ function restartService() {
         button.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Restarting...';
         button.disabled = true;
         
-        fetch('/cameras/restart_service', {
+        fetch('/api/service/control', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-            }
+            },
+            body: JSON.stringify({ action: 'restart' })
         })
         .then(response => {
             if (!response.ok) {

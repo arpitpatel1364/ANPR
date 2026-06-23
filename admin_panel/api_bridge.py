@@ -394,13 +394,13 @@ def control_service():
                 }
             })
         
-        # Execute manage_service script
-        manage_service_path = os.path.join(
+        # Execute run.sh script
+        run_script_path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            'manage_service.sh'
+            'run.sh'
         )
         result = subprocess.run([
-            'sudo', manage_service_path, action
+            'sudo', run_script_path, action, 'backend'
         ], capture_output=True, text=True, timeout=30)
         
         if result.returncode == 0:
