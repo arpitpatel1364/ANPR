@@ -1,185 +1,131 @@
 # ANPR (Automatic Number Plate Recognition) System
 
-A high-performance, multi-camera ANPR processing pipeline optimized for low-end to production environments. The system reads RTSP streams, performs YOLOv8 detection and LPRNet plate recognition via a multiprocessing pipeline, checks allowed formats, verifies plates in a MySQL database, and alerts an administrative dashboard in real-time.
+A high-performance, multi-camera ANPR processing pipeline optimized for production environments. The system reads RTSP streams, performs YOLOv8 vehicle detection and LPRNet plate recognition via an asynchronous multiprocessing pipeline, verifies plates against an allowed list, logs detections to a MySQL database, and powers a modern administrative web dashboard for real-time monitoring and configuration.
 
 ---
 
 ## Quick Start (Production Setup)
 
-**Prerequisites:** Ubuntu 20.04+, Python 3.8+, MySQL/MariaDB, 4GB+ RAM.
+**Prerequisites:** Ubuntu 20.04+, Python 3.8+, XAMPP/MySQL/MariaDB, 4GB+ RAM, NVIDIA GPU (optional but highly recommended for CUDA acceleration).
 
-We recommend using the automated setup script to configure dependencies, database structures, and systemd services automatically:
+The system includes a fully automated, turnkey setup script. It installs system dependencies, checks the Python environment, auto-creates the `anpr_system` database, builds the required tables, creates the default admin user, and configures systemd services.
 
 ```bash
 # Make scripts executable
 chmod +x *.sh
 
-# Run automated setup script
-sudo ./setup_production.sh
+# Run the fully automated, turnkey setup
+sudo ./setup.sh all
 ```
+
+Once the setup completes, the backend inference engine and the admin dashboard will automatically start in the background.
+
+Navigate to **http://localhost:8084** to access the dashboard.
+* **Default Login:** `admin` / `admin123` *(Please change this upon first login!)*
 
 ---
 
-## Commands Quick Reference
+## System Management Quick Reference
 
 The system runs as two background systemd services:
-1. **ANPR Multi-Camera Core Service:** anpr-multi-camera
-2. **ANPR Admin Panel Dashboard Service:** anpr-admin-panel
+1. **Backend AI Pipeline:** `anpr-multi-camera`
+2. **Admin Web Dashboard:** `anpr-admin-panel`
 
-### 1. Management Script Commands
-We provide helper scripts (manage_service.sh and manage_admin_service.sh) to simplify execution without typing long commands:
+We provide a unified management script (`run.sh`) to easily control these services. 
 
-| Action | ANPR Core Service Command | Admin Panel Service Command |
-| :--- | :--- | :--- |
-| **Start** | ./manage_service.sh start | ./manage_admin_service.sh start |
-| **Stop** | ./manage_service.sh stop | ./manage_admin_service.sh stop |
-| **Restart** | ./manage_service.sh restart | ./manage_admin_service.sh restart |
-| **Status** | ./manage_service.sh status | ./manage_admin_service.sh status |
-| **Live Logs** | ./manage_service.sh logs | ./manage_admin_service.sh logs |
-| **Recent Logs** | ./manage_service.sh logs-tail | (Displays inside status) |
-| **Enable on Boot** | ./manage_service.sh enable | ./manage_admin_service.sh enable |
-| **Disable on Boot**| ./manage_service.sh disable | ./manage_admin_service.sh disable |
-| **Uninstall Service**| ./manage_service.sh uninstall | ./manage_admin_service.sh uninstall |
-
-### 2. Standard systemctl Commands
-Alternatively, you can manage the services directly using native Ubuntu systemctl utility commands:
+### Common Commands
 
 ```bash
-# --- Start Services ---
-sudo systemctl start anpr-multi-camera
-sudo systemctl start anpr-admin-panel
+# Start all services
+sudo ./run.sh start all
 
-# --- Stop Services ---
-sudo systemctl stop anpr-multi-camera
-sudo systemctl stop anpr-admin-panel
+# Stop all services
+sudo ./run.sh stop all
 
-# --- Restart Services ---
+# Restart the backend AI pipeline
+sudo ./run.sh restart backend
+
+# View live logs for the admin panel
+sudo ./run.sh logs admin
+
+# Check the status of both services
+sudo ./run.sh status all
+```
+
+### Manual systemctl Commands (Optional)
+If you prefer native systemd commands:
+```bash
 sudo systemctl restart anpr-multi-camera
-sudo systemctl restart anpr-admin-panel
-
-# --- Service Status ---
-sudo systemctl status anpr-multi-camera
-sudo systemctl status anpr-admin-panel
-
-# --- Show Live Logs ---
-sudo journalctl -u anpr-multi-camera -f
 sudo journalctl -u anpr-admin-panel -f
-
-# --- Enable/Disable Autostart on Boot ---
-sudo systemctl enable anpr-multi-camera anpr-admin-panel
-sudo systemctl disable anpr-multi-camera anpr-admin-panel
 ```
 
 ---
 
-## Local Developer / Local Setup
+## System Features
 
-If you prefer to run the system in the foreground (e.g., for local testing or debugging) instead of using system services:
-
-### 1. Virtual Environment & Dependencies
-```bash
-# Create and activate virtual environment
-python3 -m venv venv
-source venv/bin/activate
-
-# Install requirements
-pip install -r requirements.txt
-```
-
-### 2. Configure Database & Initial Data
-Ensure MySQL is running and set your credentials inside the "database" block of config.json. Then run:
-```bash
-# Initialize MySQL tables and schema
-python scripts/init_database.py
-
-# Create default administrator credentials
-python scripts/create_admin_user.py
-```
-
-### 3. Run in Active Terminal (Development Mode)
-Run the two services in separate shell windows:
-
-* **Terminal 1: ANPR Core Processing Pipeline**
-  ```bash
-  source venv/bin/activate
-  python app_multi_camera_lprnet.py
-  ```
-
-* **Terminal 2: Admin Dashboard Panel Web Server**
-  ```bash
-  source venv/bin/activate
-  cd admin_panel
-  python app.py
-  ```
-
-Once running, navigate to http://localhost:8084 to access the dashboard.
-* **Default Credentials:** admin / admin123
+* **Centralized Dashboard:** Manage your cameras, regions of interest (ROI), allowed license plates, and system settings completely from the modern web UI. No more editing JSON configuration files.
+* **Asynchronous AI Pipeline:** The core engine (`app_multi_camera_lprnet.py`) runs an advanced multi-process loop that handles frame grabbing, inference, and database writing completely asynchronously to eliminate bottlenecking.
+* **Database Integration:** Seamlessly integrated with MySQL. The system uses a centralized database for zero-downtime camera updates and robust historical data logging.
+* **Live ROI Editor:** Define custom polygon regions of interest for each camera directly in the web browser using a live snapshot from the camera stream.
 
 ---
 
 ## Architecture & Project Structure
 
-The project is split into two independent services that work seamlessly together:
-- **ANPR Service:** Processes camera feeds and logs detections to MySQL.
-- **Admin Panel Service:** Provides a web interface to view and manage detections.
-
 ```
-ANPR-Production/
-├── app_multi_camera_lprnet.py   # Main ANPR processing service
-├── plate_logger.py              # Detection logging module (MySQL)
-├── db_connection.py             # Database connection handler
-├── config.json                  # Main configuration file (cameras, settings)
-├── database_schema.sql          # Database schema
-├── scripts/                     # Helper & migration scripts
-│   ├── init_database.py
-│   ├── create_admin_user.py
-│   └── migrate_to_mysql.py
-├── admin_panel/                 # Admin panel web application
+ANPR/
+├── app_multi_camera_lprnet.py   # Core asynchronous AI inference engine
+├── run.sh                       # Unified service management controller
+├── setup.sh                     # Turnkey installation and migration script
+├── db_connection.py             # Global MySQL connection pool manager
+├── database_schema.sql          # Base database structure definition
+├── admin_panel/                 # Web Dashboard
 │   ├── app.py                   # Flask web server
-│   ├── templates/               # HTML templates
-│   └── static/                  # CSS, JS, images
-└── requirements.txt             # Python dependencies
+│   ├── camera_manager.py        # Camera API routing and stream logic
+│   ├── templates/               # Modern HTML frontend
+│   └── static/                  # CSS/JS assets and live frame cache
+├── scripts/                     # Helper & migration scripts
+│   ├── init_database.py         # Automated database builder
+│   └── migrate_to_mysql.py      # Legacy flat-file to MySQL migration
+└── requirements.txt             # Core Python dependencies
 ```
 
 ---
 
-## MySQL Database Migration
+## Migrating from Legacy Versions
 
-If you are upgrading from an older version of this system that used CSV or JSON files for plate storage:
+If you are upgrading from an older version of this system that relied on `config.json` and flat-file `detections.csv` storage:
 
-1. Configure your MySQL credentials in config.json.
-2. Initialize database schema:
+1. Run the automated setup: `sudo ./setup.sh all` (this provisions the MySQL tables).
+2. Stop the services: `sudo ./run.sh stop all`
+3. Run the automated migration script to securely transfer your historical logs and camera configs without duplicates:
    ```bash
-   python scripts/init_database.py
-   ```
-3. Run the automated migration script to securely transfer historical logs without duplicates:
-   ```bash
+   source anpr_env/bin/activate
    python scripts/migrate_to_mysql.py
+   python scripts/config_db.py
    ```
-4. Start your services.
+4. Restart the system: `sudo ./run.sh start all`
 
 ---
 
-## Troubleshooting & Maintenance
+## Troubleshooting
 
-### Common Issues
-
-* **Service won't start:**
-  Check error details in the system journal:
+* **Service won't start or AI is crashing:**
+  Check the live logs for the core pipeline to identify model or stream errors:
   ```bash
-  sudo journalctl -u anpr-multi-camera -n 50
+  sudo ./run.sh logs backend
   ```
-  Ensure the database user is permitted and credentials match config.json.
 
-* **Port 8084 already in use (Admin Panel):**
-  Identify and terminate the occupying process:
+* **Dashboard not loading / Port 8084 in use:**
+  If the admin panel fails to bind to port 8084, another service may be using it.
   ```bash
   sudo lsof -i :8084
   sudo kill -9 <PID>
+  sudo ./run.sh restart admin
   ```
 
-* **Camera Connection Fails:**
-  Verify the RTSP feed URL manually via VLC or ffprobe:
+* **Cameras repeatedly disconnecting:**
+  Ensure your RTSP links are stable. You can test them manually using VLC or:
   ```bash
   ffprobe rtsp://your-camera-url
   ```
