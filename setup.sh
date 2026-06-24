@@ -332,7 +332,20 @@ function install_services() {
     # XAMPP Service
     if [ -f "$SCRIPT_DIR/xampp.service" ]; then
         cp "$SCRIPT_DIR/xampp.service" /etc/systemd/system/
+        
+        # Make systemd ignore XAMPP partial failures (e.g. Apache port 80 conflicts)
+        sed -i 's|ExecStart=/opt/lampp/lampp start|ExecStart=-/opt/lampp/lampp start|g' /etc/systemd/system/xampp.service
+        
         systemctl enable xampp.service
+        
+        # Fix permissions before starting it
+        if [ -d "/opt/lampp/var/mysql" ]; then
+            info "Fixing XAMPP MySQL directory permissions..."
+            chown -R mysql:mysql /opt/lampp/var/mysql 2>/dev/null || chown -R nobody:root /opt/lampp/var/mysql 2>/dev/null || true
+            chmod -R 777 /opt/lampp/var/mysql 2>/dev/null || true
+        fi
+        
+        systemctl daemon-reload
         systemctl start xampp.service || warn "xampp.service failed to start"
     fi
 
