@@ -84,6 +84,11 @@ ensure_mysql_running() {
     local started=0
     # Try starting XAMPP/MySQL/MariaDB if installed
     if [ -x "/opt/lampp/lampp" ]; then
+        echo "Fixing XAMPP MySQL directory permissions..."
+        if [ -d "/opt/lampp/var/mysql" ]; then
+            $SUDO chown -R mysql:mysql /opt/lampp/var/mysql 2>/dev/null || $SUDO chown -R nobody:root /opt/lampp/var/mysql 2>/dev/null || true
+            $SUDO chmod -R 777 /opt/lampp/var/mysql 2>/dev/null || true
+        fi
         echo "Starting XAMPP MySQL..."
         $SUDO /opt/lampp/lampp startmysql || echo "Warning: Failed to start XAMPP MySQL"
         started=1
@@ -104,8 +109,19 @@ ensure_mysql_running() {
         chmod +x "$SCRIPT_DIR/xampp-installer.run"
         $SUDO "$SCRIPT_DIR/xampp-installer.run" --mode unattended
         rm -f "$SCRIPT_DIR/xampp-installer.run"
-        $SUDO /opt/lampp/lampp start
-        echo "XAMPP installed and started."
+        
+        if [ -x "/opt/lampp/lampp" ]; then
+            echo "Fixing XAMPP MySQL directory permissions..."
+            if [ -d "/opt/lampp/var/mysql" ]; then
+                $SUDO chown -R mysql:mysql /opt/lampp/var/mysql 2>/dev/null || $SUDO chown -R nobody:root /opt/lampp/var/mysql 2>/dev/null || true
+                $SUDO chmod -R 777 /opt/lampp/var/mysql 2>/dev/null || true
+            fi
+            echo "Starting XAMPP MySQL..."
+            $SUDO /opt/lampp/lampp startmysql || echo "Warning: Failed to start XAMPP MySQL after installation"
+        else
+            echo "Error: XAMPP was not installed successfully."
+            exit 1
+        fi
     fi
 
     wait_for_mysql 60

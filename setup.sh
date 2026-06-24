@@ -207,7 +207,12 @@ function check_xampp() {
     
     local started=0
     if [[ -x /opt/lampp/lampp ]]; then
-        info "Found XAMPP. Starting XAMPP MySQL..."
+        info "Found XAMPP. Fixing MySQL directory permissions..."
+        if [[ -d "/opt/lampp/var/mysql" ]]; then
+            $SUDO chown -R mysql:mysql /opt/lampp/var/mysql 2>/dev/null || $SUDO chown -R nobody:root /opt/lampp/var/mysql 2>/dev/null || true
+            $SUDO chmod -R 777 /opt/lampp/var/mysql 2>/dev/null || true
+        fi
+        info "Starting XAMPP MySQL..."
         $SUDO /opt/lampp/lampp startmysql || warn "Failed to start XAMPP MySQL"
         started=1
     elif systemctl list-units --all --type=service | grep -q "mysql.service"; then
@@ -230,6 +235,11 @@ function check_xampp() {
         info "XAMPP installation completed."
         
         if [[ -x /opt/lampp/lampp ]]; then
+            info "Fixing XAMPP MySQL directory permissions..."
+            if [[ -d "/opt/lampp/var/mysql" ]]; then
+                $SUDO chown -R mysql:mysql /opt/lampp/var/mysql 2>/dev/null || $SUDO chown -R nobody:root /opt/lampp/var/mysql 2>/dev/null || true
+                $SUDO chmod -R 777 /opt/lampp/var/mysql 2>/dev/null || true
+            fi
             info "Starting XAMPP MySQL..."
             $SUDO /opt/lampp/lampp startmysql || warn "Failed to start XAMPP MySQL after installation"
         else
