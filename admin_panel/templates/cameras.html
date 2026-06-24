@@ -831,20 +831,37 @@ function setCameraRoi(event, cameraId) {
     const camera = camerasData.find(cam => cam.id == cameraId);
     const cameraName = camera ? camera.name : 'Unknown Camera';
     
-    let existingRoi = null;
-    if (camera && camera.roi_polygon) {
-        try {
-            existingRoi = typeof camera.roi_polygon === 'string' ? JSON.parse(camera.roi_polygon) : camera.roi_polygon;
-        } catch (e) {
-            console.error('Failed to parse existing ROI', e);
+    let existingRoiPolygon = null;
+    let existingRoiBox = null;
+    let initialType = 'polygon';
+    
+    if (camera) {
+        if (camera.roi_polygon) {
+            try {
+                existingRoiPolygon = typeof camera.roi_polygon === 'string' ? JSON.parse(camera.roi_polygon) : camera.roi_polygon;
+                if (existingRoiPolygon && existingRoiPolygon.length > 0) initialType = 'polygon';
+            } catch (e) {
+                console.error('Failed to parse existing polygon ROI', e);
+            }
+        }
+        if (camera.roi) {
+            try {
+                existingRoiBox = typeof camera.roi === 'string' ? JSON.parse(camera.roi) : camera.roi;
+                // If it has x1 and we don't have a polygon, default to box
+                if (existingRoiBox && existingRoiBox.x1 !== undefined && (!existingRoiPolygon || existingRoiPolygon.length === 0)) {
+                    initialType = 'box';
+                }
+            } catch (e) {
+                console.error('Failed to parse existing box ROI', e);
+            }
         }
     }
     
-    showWebRoiModal(null, cameraId, cameraName, false, existingRoi);
+    showWebRoiModal(null, cameraId, cameraName, false, existingRoiPolygon, existingRoiBox, initialType);
 }
 
 // Web-based ROI selection modal
-function showWebRoiModal(frameData, cameraId, cameraName, isNewCamera = false, existingRoi = null) {
+function showWebRoiModal(frameData, cameraId, cameraName, isNewCamera = false, existingRoiPolygon = null, existingRoiBox = null, initialType = 'polygon') {
     // Create modal HTML
     const modalHtml = `
         <div class="modal fade" id="roiModal" tabindex="-1" aria-labelledby="roiModalLabel" aria-hidden="true">
@@ -860,6 +877,16 @@ function showWebRoiModal(frameData, cameraId, cameraName, isNewCamera = false, e
                         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
                     </div>
                     <div class="modal-body" style="padding: 1.5rem;">
+                        <div class="mb-3 d-flex justify-content-center gap-4 p-2" style="background-color: #f8f9fa; border-radius: 0.375rem; border: 1px solid #dee2e6;">
+                            <div class="form-check form-check-inline">
+                                <input class="form-check-input" type="radio" name="roiTypeRadio" id="roiTypePolygon" value="polygon" ${initialType === 'polygon' ? 'checked' : ''}>
+                                <label class="form-check-label fw-bold" for="roiTypePolygon"><i class="bi bi-hexagon me-1"></i>Polygon</label>
+                            </div>
+                            <div class="form-check form-check-inline">
+                                <input class="form-check-input" type="radio" name="roiTypeRadio" id="roiTypeBox" value="box" ${initialType === 'box' ? 'checked' : ''}>
+                                <label class="form-check-label fw-bold" for="roiTypeBox"><i class="bi bi-bounding-box me-1"></i>Bounding Box</label>
+                            </div>
+                        </div>
                         <div class="mb-3 p-3" style="background-color: #f8f9fa; border-radius: 0.375rem; border-left: 4px solid #198754;">
                             <small class="text-muted d-block">
                                 <i class="bi bi-info-circle me-2"></i>
@@ -902,10 +929,35 @@ function showWebRoiModal(frameData, cameraId, cameraName, isNewCamera = false, e
     let originalWidth = 0;
     let originalHeight = 0;
 
-    let roiType = 'polygon';
-    let isDrawing = false;
+    let roiType = initialType;
     let points = [];
     let mouseX = -1, mouseY = -1;
+    
+    // Box specific state
+    let isDraggingBox = false;
+    let boxStart = null;
+    let boxRect = null;
+
+    function updateInstructions() {
+        if (roiType === 'polygon') {
+            document.getElementById('instructions').innerText = "Click to add points for the polygon ROI. Click the first point again to close the polygon and save automatically.";
+        } else {
+            document.getElementById('instructions').innerText = "Click and drag to draw a rectangular bounding box.";
+        }
+    }
+    updateInstructions();
+
+    // Handle radio changes
+    document.querySelectorAll('input[name="roiTypeRadio"]').forEach(radio => {
+        radio.addEventListener('change', function() {
+            roiType = this.value;
+            points = [];
+            boxRect = null;
+            isDraggingBox = false;
+            redrawCanvas();
+            updateInstructions();
+        });
+    });
 
     img.onload = function() {
         originalWidth = img.width;
@@ -920,11 +972,18 @@ function showWebRoiModal(frameData, cameraId, cameraName, isNewCamera = false, e
         canvas.width = Math.round(originalWidth * imageScale);
         canvas.height = Math.round(originalHeight * imageScale);
 
-        if (existingRoi && Array.isArray(existingRoi) && existingRoi.length > 0) {
-            points = existingRoi.map(p => ({
+        if (initialType === 'polygon' && existingRoiPolygon && Array.isArray(existingRoiPolygon) && existingRoiPolygon.length > 0) {
+            points = existingRoiPolygon.map(p => ({
                 x: (p.x !== undefined ? p.x : p[0]) * imageScale,
                 y: (p.y !== undefined ? p.y : p[1]) * imageScale
             }));
+        } else if (initialType === 'box' && existingRoiBox && existingRoiBox.x1 !== undefined) {
+            boxRect = {
+                x: existingRoiBox.x1 * imageScale,
+                y: existingRoiBox.y1 * imageScale,
+                w: (existingRoiBox.x2 - existingRoiBox.x1) * imageScale,
+                h: (existingRoiBox.y2 - existingRoiBox.y1) * imageScale
+            };
         }
 
         redrawCanvas();
@@ -934,13 +993,13 @@ function showWebRoiModal(frameData, cameraId, cameraName, isNewCamera = false, e
     if (frameData) {
         img.src = 'data:image/jpeg;base64,' + frameData;
     } else {
-        img.src = `/static/images/roi_snapshots/${cameraId}.jpg?t=${Date.now()}`;
+        img.src = \`/static/images/roi_snapshots/\${cameraId}.jpg?t=\${Date.now()}\`;
         
         // Add error handler in case snapshot doesn't exist
         img.onerror = function() {
             console.error('Snapshot not found. Waiting for backend to capture live frame...');
             setTimeout(() => {
-                img.src = `/static/images/roi_snapshots/${cameraId}.jpg?t=${Date.now()}`;
+                img.src = \`/static/images/roi_snapshots/\${cameraId}.jpg?t=\${Date.now()}\`;
             }, 2000);
         };
     }
@@ -965,20 +1024,46 @@ function showWebRoiModal(frameData, cameraId, cameraName, isNewCamera = false, e
             }
             points.push({ x: x, y: y });
             redrawCanvas(x, y);
+        } else if (roiType === 'box') {
+            isDraggingBox = true;
+            boxStart = { x: x, y: y };
+            boxRect = { x: x, y: y, w: 0, h: 0 };
         }
     });
 
-    // Add mousemove for live preview line
+    // Add mousemove for live preview line or box drawing
     canvas.addEventListener('mousemove', function(e) {
+        const rect = canvas.getBoundingClientRect();
+        mouseX = e.clientX - rect.left;
+        mouseY = e.clientY - rect.top;
+        
         if (roiType === 'polygon' && points.length > 0) {
-            const rect = canvas.getBoundingClientRect();
-            mouseX = e.clientX - rect.left;
-            mouseY = e.clientY - rect.top;
             redrawCanvas(mouseX, mouseY);
+        } else if (roiType === 'box' && isDraggingBox && boxStart) {
+            boxRect = {
+                x: boxStart.x,
+                y: boxStart.y,
+                w: mouseX - boxStart.x,
+                h: mouseY - boxStart.y
+            };
+            redrawCanvas();
+        }
+    });
+    
+    canvas.addEventListener('mouseup', function(e) {
+        if (roiType === 'box' && isDraggingBox) {
+            isDraggingBox = false;
+            // Only keep if box is large enough
+            if (boxRect && Math.abs(boxRect.w) > 10 && Math.abs(boxRect.h) > 10) {
+                redrawCanvas();
+            } else {
+                boxRect = null;
+                redrawCanvas();
+            }
         }
     });
 
-    // Double click anywhere to quickly close and save
+    // Double click anywhere to quickly close and save (for polygon)
     canvas.addEventListener('dblclick', function(e) {
         if (roiType === 'polygon' && points.length >= 3) {
             savePolygonRoi(cameraId, points);
@@ -989,16 +1074,27 @@ function showWebRoiModal(frameData, cameraId, cameraName, isNewCamera = false, e
     // Reset button
     document.getElementById('resetRoi').addEventListener('click', function() {
         points = [];
+        boxRect = null;
+        isDraggingBox = false;
         redrawCanvas();
     });
 
     // Save button
     document.getElementById('saveRoi').addEventListener('click', function() {
-        if (roiType === 'polygon' && points.length >= 3) {
-            savePolygonRoi(cameraId, points);
-            modal.hide();
-        } else {
-            alert('Please complete the ROI selection first. A polygon needs at least 3 points.');
+        if (roiType === 'polygon') {
+            if (points.length >= 3) {
+                savePolygonRoi(cameraId, points);
+                modal.hide();
+            } else {
+                alert('Please complete the ROI selection first. A polygon needs at least 3 points.');
+            }
+        } else if (roiType === 'box') {
+            if (boxRect && Math.abs(boxRect.w) > 10 && Math.abs(boxRect.h) > 10) {
+                saveBoxRoi(cameraId, boxRect);
+                modal.hide();
+            } else {
+                alert('Please draw a valid rectangular bounding box first.');
+            }
         }
     });
 
@@ -1043,10 +1139,16 @@ function showWebRoiModal(frameData, cameraId, cameraName, isNewCamera = false, e
                 ctx.arc(point.x, point.y, 4, 0, 2 * Math.PI);
                 ctx.fill();
             });
+        } else if (roiType === 'box' && boxRect) {
+            ctx.strokeStyle = '#00ff00';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(boxRect.x, boxRect.y, boxRect.w, boxRect.h);
+            
+            // Draw semi-transparent fill
+            ctx.fillStyle = 'rgba(0, 255, 0, 0.2)';
+            ctx.fillRect(boxRect.x, boxRect.y, boxRect.w, boxRect.h);
         }
     }
-
-
 
     function savePolygonRoi(cameraId, pts) {
         const coordinates = pts.map(p => [
@@ -1054,6 +1156,20 @@ function showWebRoiModal(frameData, cameraId, cameraName, isNewCamera = false, e
             Math.round(p.y / imageScale)
         ]);
         saveRoiToServer(cameraId, 'polygon', coordinates);
+    }
+    
+    function saveBoxRoi(cameraId, rect) {
+        // Ensure x1, y1 is top-left and x2, y2 is bottom-right even if drawn backwards
+        const x1 = Math.min(rect.x, rect.x + rect.w);
+        const y1 = Math.min(rect.y, rect.y + rect.h);
+        const x2 = Math.max(rect.x, rect.x + rect.w);
+        const y2 = Math.max(rect.y, rect.y + rect.h);
+        
+        const coordinates = [
+            [Math.round(x1 / imageScale), Math.round(y1 / imageScale)],
+            [Math.round(x2 / imageScale), Math.round(y2 / imageScale)]
+        ];
+        saveRoiToServer(cameraId, 'box', coordinates);
     }
 
     function saveRoiToServer(cameraId, roiType, coordinates) {
