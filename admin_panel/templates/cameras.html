@@ -1254,28 +1254,30 @@
             const y = e.clientY - rect.top;
 
             if (roiType === 'polygon') {
-                // Check if dragging an existing point
-                let clickedPointIndex = -1;
-                for (let i = 0; i < points.length; i++) {
-                    if (Math.sqrt((x - points[i].x) ** 2 + (y - points[i].y) ** 2) < 10) {
-                        clickedPointIndex = i;
-                        break;
+                if (activeTool === 'select') {
+                    // Check if dragging an existing point
+                    let clickedPointIndex = -1;
+                    for (let i = 0; i < points.length; i++) {
+                        if (Math.sqrt((x - points[i].x) ** 2 + (y - points[i].y) ** 2) < 10) {
+                            clickedPointIndex = i;
+                            break;
+                        }
                     }
-                }
 
-                if (clickedPointIndex !== -1) {
-                    draggingPointIndex = clickedPointIndex;
-                    return;
-                }
-
-                // Check if dragging the whole shape
-                if (points.length >= 3) {
-                    if (isPointInPolygon({ x, y }, points)) {
-                        isDraggingPolygon = true;
-                        dragStartX = x;
-                        dragStartY = y;
-                        initialPointsState = JSON.parse(JSON.stringify(points));
+                    if (clickedPointIndex !== -1) {
+                        draggingPointIndex = clickedPointIndex;
                         return;
+                    }
+
+                    // Check if dragging the whole shape
+                    if (points.length >= 3) {
+                        if (isPointInPolygon({ x, y }, points)) {
+                            isDraggingPolygon = true;
+                            dragStartX = x;
+                            dragStartY = y;
+                            initialPointsState = JSON.parse(JSON.stringify(points));
+                            return;
+                        }
                     }
                 }
 
