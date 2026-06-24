@@ -340,8 +340,8 @@ function install_services() {
     tee /etc/systemd/system/anpr-multi-camera.service > /dev/null <<EOF
 [Unit]
 Description=ANPR Multi-Camera Service
-After=network.target xampp.service mysql.service mariadb.service
-Wants=xampp.service mysql.service mariadb.service
+After=network.target xampp.service
+Requires=xampp.service
 
 [Service]
 Type=simple
@@ -375,8 +375,8 @@ EOF
     tee /etc/systemd/system/anpr-admin-panel.service > /dev/null <<EOF
 [Unit]
 Description=ANPR Admin Panel Web Interface
-After=network.target xampp.service mysql.service mariadb.service
-Wants=xampp.service mysql.service mariadb.service
+After=network.target xampp.service
+Requires=xampp.service
 
 [Service]
 Type=simple
