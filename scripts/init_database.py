@@ -23,7 +23,7 @@ def main():
         print("1. XAMPP MySQL is running")
         print("2. Database 'anpr_system' exists")
         print("3. User credentials are correct in environment variables")
-        return
+        sys.exit(1)
     
     print("✅ Database connection successful!")
     print()
@@ -48,6 +48,7 @@ def main():
         print("3. Click 'Import' tab")
         print("4. Choose 'database_schema.sql' file")
         print("5. Click 'Go'")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
