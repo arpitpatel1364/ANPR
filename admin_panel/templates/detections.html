@@ -422,6 +422,14 @@ function refreshDetections() {
 
 // Export detections
 function exportDetections(format = 'csv') {
+    // Check if there is data available to export
+    const tbody = document.querySelector('#detections-content tbody');
+    const rows = tbody ? tbody.querySelectorAll('tr') : [];
+    if (rows.length === 0) {
+        alert('No data available to export!');
+        return;
+    }
+
     const form = document.getElementById('filterForm');
     const formData = new FormData(form);
     const params = new URLSearchParams(formData);

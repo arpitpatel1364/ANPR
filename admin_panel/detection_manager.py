@@ -357,6 +357,10 @@ def export_detections():
             db.execute(query, tuple(params) if params else None)
             rows = db.fetchall()
         
+        if not rows:
+            flash('No data available to export matching the selected filters.', 'warning')
+            return redirect(url_for('detection.detections'))
+        
         # Generate filename with timestamp
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         filename = f'detections_export_{timestamp}.csv'
@@ -450,6 +454,10 @@ def export_detections_pdf():
             """
             db.execute(query, tuple(params) if params else None)
             rows = db.fetchall()
+            
+        if not rows:
+            flash('No data available to export matching the selected filters.', 'warning')
+            return redirect(url_for('detection.detections'))
         
         # Convert to dict format
         detections = []

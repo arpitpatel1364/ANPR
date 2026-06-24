@@ -143,7 +143,7 @@
                                 <i class="bi bi-vector-pen me-2" style="font-size: 1.1rem;"></i>
                                 <span>Set ROI</span>
                             </a></li>
-                        <li><a class="dropdown-item" href="#" onclick="testCameraLive('{{ camera.id }}')">
+                        <li><a class="dropdown-item" href="#" onclick="testCameraLive(event, '{{ camera.id }}')">
                                 <i class="bi bi-wifi me-2"></i>Test Connection (Live)
                             </a></li>
                         <li><a class="dropdown-item" href="#" onclick="refreshCamerasLive()">
@@ -260,7 +260,7 @@
                         <i class="bi bi-{{ 'stop-circle' if camera.enabled else 'play-circle' }} me-1"></i>
                         {{ 'DISABLE' if camera.enabled else 'ENABLE' }}
                     </button>
-                    <button class="btn btn-sm text-success fw-bold" onclick="testCameraLive('{{ camera.id }}')">
+                    <button class="btn btn-sm text-success fw-bold" onclick="testCameraLive(event, '{{ camera.id }}')">
                         <i class="bi bi-wifi me-1"></i>TEST LIVE
                     </button>
                 </div>
@@ -741,8 +741,26 @@
 
     // Test camera connection
     function testCameraLive(event, cameraId) {
-        if (event) event.preventDefault();
-        const button = event ? (event.target.closest('button') || event.target.closest('a') || event.target) : null;
+        // Defensive parameter normalization if called as testCameraLive(cameraId)
+        if (typeof event === 'string' && cameraId === undefined) {
+            cameraId = event;
+            event = window.event || null;
+        }
+
+        if (event && typeof event.preventDefault === 'function') {
+            event.preventDefault();
+        }
+
+        let button = null;
+        if (event && event.target) {
+            button = event.target.closest('button') || event.target.closest('a') || event.target;
+        }
+        if (!button && cameraId) {
+            button = document.querySelector(`button[onclick*="testCameraLive('${cameraId}')"]`) || 
+                     document.querySelector(`a[onclick*="testCameraLive('${cameraId}')"]`) ||
+                     document.querySelector(`[onclick*="testCameraLive(event, '${cameraId}')"]`);
+        }
+
         const originalText = button ? button.innerHTML : 'Testing...';
 
         if (button) {

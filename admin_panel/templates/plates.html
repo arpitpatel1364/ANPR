@@ -365,8 +365,12 @@ function editPlate(plate) {
 // Remove duplicates
 function removeDuplicates() {
     if (confirm('This will remove all duplicate plates from the database. Continue?')) {
-        // This would need to be implemented as a backend endpoint
-        alert('Duplicate removal functionality will be implemented in the next version.');
+        // Create a form dynamically and submit it
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = "{{ url_for('plate.remove_duplicates') }}";
+        document.body.appendChild(form);
+        form.submit();
     }
 }
 
@@ -384,7 +388,7 @@ document.getElementById('plates_text').addEventListener('input', function() {
     // Convert to uppercase and clean
     let lines = this.value.split('\n');
     lines = lines.map(line => {
-        return line.split(/[,;]/).map(plate => 
+        return line.split(/[,;\s]+/).map(plate => 
             plate.trim().toUpperCase().replace(/[^A-Z0-9]/g, '')
         ).filter(plate => plate.length > 0);
     });
