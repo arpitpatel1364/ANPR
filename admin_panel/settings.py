@@ -9,17 +9,17 @@ from scripts.config_db import load_config_from_db, save_settings_to_db
 
 settings_bp = Blueprint('settings', __name__)
 
-def require_admin(f):
+def require_superadmin(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
-        if session.get('user_role') not in ['admin', 'superadmin']:
-            flash('Access denied. Administrator privileges required.', 'error')
+        if session.get('user_role') != 'superadmin':
+            flash('Access denied. Super Administrator privileges required.', 'error')
             return redirect(url_for('dashboard'))
         return f(*args, **kwargs)
     return decorated_function
 
 @settings_bp.route('/settings', methods=['GET', 'POST'])
-@require_admin
+@require_superadmin
 def settings():
     if request.method == 'POST':
         global_settings = {

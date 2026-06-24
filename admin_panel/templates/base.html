@@ -85,7 +85,7 @@
                         </div>
                     </a>
                 </li>
-                {% if session.user_role in ['admin', 'superadmin'] %}
+                {% if session.user_role == 'superadmin' %}
                 <li class="nav-item">
                     <a class="nav-link {% if request.endpoint == 'settings.settings' %}active{% endif %}" href="{{ url_for('settings.settings') }}">
                         <div class="nav-icon">
@@ -109,7 +109,7 @@
                 </div>
                 <div class="user-info">
                     <span class="user-name">{{ session.username }}</span>
-                    <span class="user-role">Administrator</span>
+                    <span class="user-role">{{ session.get('user_role', 'Administrator') | title }}</span>
                 </div>
                 <a href="{{ url_for('auth.logout') }}" class="user-logout-btn" title="Logout">
                     <i class="bi bi-box-arrow-right"></i>
