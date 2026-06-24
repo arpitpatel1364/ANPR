@@ -83,7 +83,7 @@ run_backend() {
     export CUDA_VISIBLE_DEVICES=0
     export OPENCV_VIDEOIO_PRIORITY_MSMF=0
     
-    python app_multi_camera_lprnet.py 2>&1 | tee -a "$LOG_FILE"
+    python -u app_multi_camera_lprnet.py 2>&1 | tee -a "$LOG_FILE"
 }
 
 run_admin() {
