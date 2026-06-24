@@ -186,9 +186,35 @@ def bulk_add_plates():
     
     # Split by commas, semicolons, newlines, or whitespace
     raw_plates = re.split(r'[\n,;\s]+', plates_text)
-    plates = [p.strip().upper() for p in raw_plates if p.strip()]
+    raw_tokens = [p.strip().upper() for p in raw_plates if p.strip()]
     
-    if not plates:
+    if not raw_tokens:
+        flash('No valid plates found!', 'error')
+        return redirect(url_for('plate.plates'))
+    
+    # Simple license plate format validation patterns
+    plate_pattern = re.compile(r'^[A-Z]{2}[0-9]{2}[A-Z]{1,3}[0-9]{1,4}$|^[0-9]{2}BH[0-9]{4}[A-Z]{1,2}$')
+    sub_pattern = re.compile(r'[A-Z]{2}[0-9]{2}[A-Z]{1,3}[0-9]{1,4}|[0-9]{2}BH[0-9]{4}[A-Z]{1,2}')
+    
+    plates = []
+    invalid_plates = []
+    
+    for token in raw_tokens:
+        if plate_pattern.match(token):
+            plates.append(token)
+        else:
+            # Try to extract valid plates if they entered multiple without delimiters
+            found_plates = sub_pattern.findall(token)
+            if found_plates:
+                plates.extend(found_plates)
+                # If there was unmatched garbage alongside valid plates, track as invalid too
+                reconstructed = "".join(found_plates)
+                if len(reconstructed) < len(token):
+                    invalid_plates.append(token)
+            else:
+                invalid_plates.append(token)
+                
+    if not plates and not invalid_plates:
         flash('No valid plates found!', 'error')
         return redirect(url_for('plate.plates'))
     
@@ -201,17 +227,8 @@ def bulk_add_plates():
             
             new_plates = []
             duplicates = []
-            invalid_plates = []
-            
-            # Simple license plate format validation pattern
-            plate_pattern = re.compile(r'^[A-Z]{2}[0-9]{2}[A-Z]{1,3}[0-9]{1,4}$|^[0-9]{2}BH[0-9]{4}[A-Z]{1,2}$')
             
             for plate in plates:
-                # First check length and format to prevent DB truncate/length errors
-                if len(plate) > 20 or not plate_pattern.match(plate):
-                    invalid_plates.append(plate)
-                    continue
-                    
                 if plate not in existing_plates:
                     new_plates.append(plate)
                     existing_plates.add(plate)
@@ -224,6 +241,9 @@ def bulk_add_plates():
                 failed_plates = []
                 for plate in new_plates:
                     try:
+                        if len(plate) > 20:
+                            failed_plates.append((plate, "value too long"))
+                            continue
                         db.execute("INSERT INTO allowed_plates (license_plate) VALUES (%s) ON DUPLICATE KEY UPDATE license_plate = license_plate", (plate,))
                         success_count += 1
                     except Exception as db_err:
@@ -236,7 +256,7 @@ def bulk_add_plates():
                     flash(f'plate list updated in ANPR system', 'info')
                 
                 if failed_plates:
-                    error_details = ", ".join([f"{p} ({err})" for p, err in failed_plates[:3]])
+                    error_details = ", ".join([f"{p[:15]}... ({err})" if len(p) > 15 else f"{p} ({err})" for p, err in failed_plates[:3]])
                     if len(failed_plates) > 3:
                         error_details += f" and {len(failed_plates) - 3} more"
                     flash(f'Failed to add some plates due to database errors: {error_details}', 'error')
@@ -245,7 +265,14 @@ def bulk_add_plates():
                 flash(f'{len(duplicates)} plates were already in the list', 'warning')
                 
             if invalid_plates:
-                invalid_show = invalid_plates[:5]
+                # Truncate long invalid plate strings to prevent UI layout breakage
+                truncated_invalids = []
+                for p in invalid_plates:
+                    if len(p) > 20:
+                        truncated_invalids.append(p[:20] + '...')
+                    else:
+                        truncated_invalids.append(p)
+                invalid_show = truncated_invalids[:5]
                 invalid_msg = ", ".join(invalid_show)
                 if len(invalid_plates) > 5:
                     invalid_msg += f" and {len(invalid_plates) - 5} more"
