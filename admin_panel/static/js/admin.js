@@ -819,7 +819,8 @@ function testCameraLive(cameraId) {
     } else {
         // Fallback to HTTP API if WebSocket not available
         console.warn('WebSocket not connected, falling back to HTTP API');
-        testCameraHttp(cameraId, event?.target);
+        const target = (typeof event !== 'undefined' && event) ? event.target : (window.event ? window.event.target : null);
+        testCameraHttp(cameraId, target);
     }
 }
 

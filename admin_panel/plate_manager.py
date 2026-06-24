@@ -184,8 +184,9 @@ def bulk_add_plates():
         flash('No plates provided!', 'error')
         return redirect(url_for('plate.plates'))
     
-    # Split by newlines, commas, or semicolons
-    plates = [p.strip().upper() for p in plates_text.replace('\n', ',').replace(';', ',').split(',') if p.strip()]
+    # Split by commas, semicolons, newlines, or whitespace
+    raw_plates = re.split(r'[\n,;\s]+', plates_text)
+    plates = [p.strip().upper() for p in raw_plates if p.strip()]
     
     if not plates:
         flash('No valid plates found!', 'error')
@@ -200,8 +201,17 @@ def bulk_add_plates():
             
             new_plates = []
             duplicates = []
+            invalid_plates = []
+            
+            # Simple license plate format validation pattern
+            plate_pattern = re.compile(r'^[A-Z]{2}[0-9]{2}[A-Z]{1,3}[0-9]{1,4}$|^[0-9]{2}BH[0-9]{4}[A-Z]{1,2}$')
             
             for plate in plates:
+                # First check length and format to prevent DB truncate/length errors
+                if len(plate) > 20 or not plate_pattern.match(plate):
+                    invalid_plates.append(plate)
+                    continue
+                    
                 if plate not in existing_plates:
                     new_plates.append(plate)
                     existing_plates.add(plate)
@@ -210,19 +220,66 @@ def bulk_add_plates():
             
             # Insert new plates
             if new_plates:
+                success_count = 0
+                failed_plates = []
                 for plate in new_plates:
-                    db.execute("INSERT INTO allowed_plates (license_plate) VALUES (%s) ON DUPLICATE KEY UPDATE license_plate = license_plate", (plate,))
-                flash(f'Added {len(new_plates)} new plates successfully!', 'success')
+                    try:
+                        db.execute("INSERT INTO allowed_plates (license_plate) VALUES (%s) ON DUPLICATE KEY UPDATE license_plate = license_plate", (plate,))
+                        success_count += 1
+                    except Exception as db_err:
+                        failed_plates.append((plate, str(db_err)))
                 
-                # Broadcast reload signal to ANPR service for live updates
-                broadcast_reload_plates()
-                flash(f'plate list updated in ANPR system', 'info')
+                if success_count > 0:
+                    flash(f'Added {success_count} new plates successfully!', 'success')
+                    # Broadcast reload signal to ANPR service for live updates
+                    broadcast_reload_plates()
+                    flash(f'plate list updated in ANPR system', 'info')
+                
+                if failed_plates:
+                    error_details = ", ".join([f"{p} ({err})" for p, err in failed_plates[:3]])
+                    if len(failed_plates) > 3:
+                        error_details += f" and {len(failed_plates) - 3} more"
+                    flash(f'Failed to add some plates due to database errors: {error_details}', 'error')
             
             if duplicates:
                 flash(f'{len(duplicates)} plates were already in the list', 'warning')
+                
+            if invalid_plates:
+                invalid_show = invalid_plates[:5]
+                invalid_msg = ", ".join(invalid_show)
+                if len(invalid_plates) > 5:
+                    invalid_msg += f" and {len(invalid_plates) - 5} more"
+                flash(f'Skipped {len(invalid_plates)} invalid/too long plates: {invalid_msg}', 'error')
+                
     except Exception as e:
         flash(f'Error adding plates: {str(e)}', 'error')
     
+    return redirect(url_for('plate.plates'))
+
+@plate_bp.route('/plates/remove_duplicates', methods=['POST'])
+def remove_duplicates():
+    """Remove duplicate plates from the database"""
+    try:
+        with DatabaseConnection() as db:
+            # Delete duplicate rows keeping the one with the smallest ID
+            query = """
+                DELETE p1 FROM allowed_plates p1
+                INNER JOIN allowed_plates p2 
+                ON p1.license_plate = p2.license_plate 
+                WHERE p1.id > p2.id
+            """
+            db.execute(query)
+            removed_count = db.cursor.rowcount
+            
+            if removed_count > 0:
+                flash(f'Successfully removed {removed_count} duplicate plate(s)!', 'success')
+                # Broadcast reload signal to ANPR service for live updates
+                broadcast_reload_plates()
+            else:
+                flash('No duplicate plates found in the database.', 'info')
+    except Exception as e:
+        flash(f'Error removing duplicates: {str(e)}', 'error')
+        
     return redirect(url_for('plate.plates'))
 
 @plate_bp.route('/plates/search')

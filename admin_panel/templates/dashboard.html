@@ -15,9 +15,9 @@
                     <button class="btn btn-primary btn-modern btn-modern-enhanced" onclick="refreshStats(true)">
                         <i class="bi bi-arrow-clockwise me-2"></i>Refresh Data
                     </button>
-                    <button class="btn btn-outline-primary btn-modern btn-modern-enhanced ms-2">
+                    <a href="{{ url_for('detection.export_detections') }}" class="btn btn-outline-primary btn-modern btn-modern-enhanced ms-2">
                         <i class="bi bi-download me-2"></i>Export Data
-                    </button>
+                    </a>
                 </div>
             </div>
         </div>
