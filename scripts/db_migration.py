@@ -52,47 +52,7 @@ def migrate_db():
     except Exception as e:
         print(f"Error creating system_settings: {e}")
 
-    # 5. Load config.json
-    try:
-        if os.path.exists('config.json'):
-            with open('config.json', 'r') as f:
-                config = json.load(f)
-            print("Loaded config.json")
-            
-            with DatabaseConnection() as db:
-                # Migrate settings
-                settings_to_migrate = ['system_mode', 'global_settings', 'display_settings', 'headless_settings']
-                for key in settings_to_migrate:
-                    if key in config:
-                        val = json.dumps(config[key]) if isinstance(config[key], (dict, list)) else str(config[key])
-                        db.execute(
-                            "INSERT INTO system_settings (setting_key, setting_value) VALUES (%s, %s) ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)",
-                            (key, val)
-                        )
-                print("Settings migrated.")
-                
-                # Migrate cameras
-                if 'cameras' in config:
-                    # Clear old cameras to avoid duplicates or orphans during migration
-                    db.execute("TRUNCATE TABLE cameras")
-                    for cam in config['cameras']:
-                        api_settings = json.dumps(cam.get('api_settings', {}))
-                        roi_polygon = json.dumps(cam.get('roi_polygon', []))
-                        
-                        db.execute("""
-                            INSERT INTO cameras (camera_id, name, location, rtsp_source, enabled, dedup_window, confidence_threshold, api_enabled, api_settings, roi_polygon)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                        """, (
-                            cam.get('id'), cam.get('name'), cam.get('location', ''), cam.get('rtsp_source'),
-                            cam.get('enabled', True), cam.get('dedup_window', 30), cam.get('confidence_threshold', 0.8),
-                            cam.get('api_enabled', False), api_settings, roi_polygon
-                        ))
-                    print(f"Migrated {len(config['cameras'])} cameras.")
-                    
-        else:
-            print("config.json not found, skipping data migration.")
-    except Exception as e:
-        print(f"Error during data migration: {e}")
+    print("DB migration completed.")
 
 if __name__ == "__main__":
     migrate_db()

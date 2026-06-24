@@ -16,6 +16,35 @@ def load_config_from_db():
     
     try:
         with DatabaseConnection() as db:
+            # Ensure tables exist to prevent "Table doesn't exist" errors on fresh setups
+            db.execute("""
+            CREATE TABLE IF NOT EXISTS system_settings (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                setting_key VARCHAR(100) NOT NULL UNIQUE,
+                setting_value TEXT NOT NULL,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+            """)
+            
+            db.execute("""
+            CREATE TABLE IF NOT EXISTS cameras (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                camera_id VARCHAR(50) NOT NULL UNIQUE,
+                name VARCHAR(255) NOT NULL,
+                location VARCHAR(255) DEFAULT NULL,
+                rtsp_source VARCHAR(500) NOT NULL,
+                enabled BOOLEAN DEFAULT TRUE,
+                dedup_window INT DEFAULT 30,
+                confidence_threshold DECIMAL(3,2) DEFAULT 0.80,
+                api_enabled BOOLEAN DEFAULT FALSE,
+                api_settings TEXT DEFAULT NULL,
+                roi_polygon TEXT DEFAULT NULL,
+                roi TEXT DEFAULT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+            """)
+
             # 1. Load settings
             db.execute("SELECT setting_key, setting_value FROM system_settings")
             settings = db.fetchall()
