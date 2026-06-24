@@ -61,6 +61,18 @@ def load_config_from_db():
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
             """)
+            
+            # Soft migrations for older databases
+            for col_query in [
+                "ALTER TABLE cameras ADD COLUMN api_enabled BOOLEAN DEFAULT FALSE",
+                "ALTER TABLE cameras ADD COLUMN api_settings TEXT DEFAULT NULL",
+                "ALTER TABLE cameras ADD COLUMN roi_polygon TEXT DEFAULT NULL",
+                "ALTER TABLE cameras ADD COLUMN roi TEXT DEFAULT NULL"
+            ]:
+                try:
+                    db.execute(col_query)
+                except Exception:
+                    pass
 
             # 1. Load settings
             db.execute("SELECT setting_key, setting_value FROM system_settings")
