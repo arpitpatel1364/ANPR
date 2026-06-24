@@ -909,7 +909,7 @@
                                 <span id="instructions">Click Edit ROI to make changes.</span>
                             </small>
                         </div>
-                        <div class="position-relative d-inline-block rounded-3 overflow-hidden shadow-lg border border-secondary" style="background-color: #0f172a;">
+                        <div class="position-relative d-inline-block rounded-3 overflow-hidden shadow-lg border border-secondary" style="background-color: #0f172a; max-width: 100%;">
                             <!-- Sleek Annotation Toolbar -->
                             <div id="canvasToolbar" class="position-absolute top-0 start-0 m-3 d-flex gap-1 p-1" style="background: rgba(15, 23, 42, 0.85); backdrop-filter: blur(8px); border: 1px solid rgba(255,255,255,0.15); border-radius: 8px; z-index: 10;">
                                 <button type="button" class="btn btn-sm text-white" id="toolSelect" title="Select / Move / Resize" style="border: none; padding: 0.5rem; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; border-radius: 6px; transition: all 0.2s;">
@@ -1013,8 +1013,8 @@
             // Reset all styles
             [selectBtn, boxBtn, polyBtn].forEach(btn => {
                 btn.style.background = 'transparent';
-                btn.classList.remove('text-white');
-                btn.classList.add('text-muted');
+                btn.style.color = 'rgba(255, 255, 255, 0.4)';
+                btn.classList.remove('text-white', 'text-muted');
                 btn.style.opacity = isEditMode ? '1' : '0.5';
                 btn.style.pointerEvents = isEditMode ? 'auto' : 'none';
             });
@@ -1027,7 +1027,7 @@
 
             if (activeBtn) {
                 activeBtn.style.background = 'rgba(255, 255, 255, 0.15)';
-                activeBtn.classList.remove('text-muted');
+                activeBtn.style.color = '#ffffff';
                 activeBtn.classList.add('text-white');
             }
 
@@ -1113,8 +1113,9 @@
             originalWidth = img.width;
             originalHeight = img.height;
 
-            const maxWidth = 1100;
-            const maxHeight = 620;
+            const screenWidth = window.innerWidth;
+            const maxWidth = screenWidth < 1200 ? Math.max(300, screenWidth - (screenWidth < 576 ? 32 : 64) - 48) : 1100;
+            const maxHeight = screenWidth < 768 ? 350 : 620;
             const widthScale = maxWidth / originalWidth;
             const heightScale = maxHeight / originalHeight;
             imageScale = Math.min(widthScale, heightScale, 1);
@@ -1222,6 +1223,45 @@
             return lower.concat(upper);
         }
 
+        function lineSegmentsIntersect(p1, p2, p3, p4) {
+            function ccw(A, B, C) {
+                return (C.y - A.y) * (B.x - A.x) > (B.y - A.y) * (C.x - A.x);
+            }
+            if ((p1.x === p3.x && p1.y === p3.y) || (p1.x === p4.x && p1.y === p4.y) ||
+                (p2.x === p3.x && p2.y === p3.y) || (p2.x === p4.x && p2.y === p4.y)) {
+                return false;
+            }
+            return (ccw(p1, p3, p4) !== ccw(p2, p3, p4)) && (ccw(p1, p2, p3) !== ccw(p1, p2, p4));
+        }
+
+        function isPolygonSelfIntersecting(pts) {
+            const n = pts.length;
+            if (n < 4) return false;
+
+            const edges = [];
+            for (let i = 0; i < n; i++) {
+                edges.push({ p1: pts[i], p2: pts[(i + 1) % n] });
+            }
+
+            for (let i = 0; i < edges.length; i++) {
+                for (let j = i + 1; j < edges.length; j++) {
+                    if (lineSegmentsIntersect(edges[i].p1, edges[i].p2, edges[j].p1, edges[j].p2)) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        function closeAndCleanPolygon() {
+            if (points.length >= 3) {
+                if (isPolygonSelfIntersecting(points)) {
+                    // Overlapping/self-intersecting - resolve using convex hull
+                    points = getConvexHull(points);
+                }
+            }
+        }
+
         function isPointInPolygon(p, polygon) {
             let isInside = false;
             let minX = polygon[0].x, maxX = polygon[0].x;
@@ -1250,8 +1290,10 @@
         canvas.addEventListener('mousedown', function (e) {
             if (!isEditMode) return;
             const rect = canvas.getBoundingClientRect();
-            const x = e.clientX - rect.left;
-            const y = e.clientY - rect.top;
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            const x = (e.clientX - rect.left) * scaleX;
+            const y = (e.clientY - rect.top) * scaleY;
 
             if (roiType === 'polygon') {
                 if (activeTool === 'select') {
@@ -1288,7 +1330,7 @@
                         const firstPoint = points[0];
                         const distance = Math.sqrt((x - firstPoint.x) ** 2 + (y - firstPoint.y) ** 2);
                         if (distance < 20) { // Click first point to close shape
-                            points = getConvexHull(points);
+                            closeAndCleanPolygon();
                             activeTool = 'select';
                             updateToolbarUI();
                             redrawCanvas();
@@ -1345,8 +1387,10 @@
         // Add mousemove for live preview line or box drawing
         canvas.addEventListener('mousemove', function (e) {
             const rect = canvas.getBoundingClientRect();
-            mouseX = e.clientX - rect.left;
-            mouseY = e.clientY - rect.top;
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            mouseX = (e.clientX - rect.left) * scaleX;
+            mouseY = (e.clientY - rect.top) * scaleY;
 
             // Update dynamic cursor
             if (isEditMode) {
@@ -1495,13 +1539,30 @@
         // Double click anywhere to connect last point to first point (for polygon)
         canvas.addEventListener('dblclick', function (e) {
             if (!isEditMode) return;
-            if (roiType === 'polygon' && points.length >= 3) {
-                // Remove the extra two points added by the double-click event clicks
-                points.pop();
-                points.pop();
+            if (roiType === 'polygon') {
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = canvas.width / rect.width;
+                const scaleY = canvas.height / rect.height;
+                const x = (e.clientX - rect.left) * scaleX;
+                const y = (e.clientY - rect.top) * scaleY;
+
+                // Clean up any points at the end of the array that are close to the double-click coordinate
+                while (points.length > 0) {
+                    const lastPt = points[points.length - 1];
+                    const dist = Math.sqrt((lastPt.x - x) ** 2 + (lastPt.y - y) ** 2);
+                    if (dist < 15) {
+                        points.pop();
+                    } else {
+                        break;
+                    }
+                }
+
+                // Add exactly one point at the double-click coordinate
+                points.push({ x: x, y: y });
+
                 if (points.length >= 3) {
-                    // Connect last point to first point and convert to convex hull (remove internal points)
-                    points = getConvexHull(points);
+                    // Connect last point to first point and clean polygon
+                    closeAndCleanPolygon();
                     activeTool = 'select';
                     updateToolbarUI();
                 } else {
@@ -1594,14 +1655,12 @@
                         ctx.stroke();
                     });
                 } else {
-                    // Completed / edit mode - draw closed convex hull
-                    let hullPoints = getConvexHull(points);
-
+                    // Completed / edit mode - draw closed polygon
                     // Draw Polygon Fill
                     ctx.beginPath();
-                    ctx.moveTo(hullPoints[0].x, hullPoints[0].y);
-                    for (let i = 1; i < hullPoints.length; i++) {
-                        ctx.lineTo(hullPoints[i].x, hullPoints[i].y);
+                    ctx.moveTo(points[0].x, points[0].y);
+                    for (let i = 1; i < points.length; i++) {
+                        ctx.lineTo(points[i].x, points[i].y);
                     }
                     ctx.closePath();
                     ctx.fillStyle = 'rgba(37, 99, 235, 0.2)'; // Sleek transparent blue
@@ -1611,15 +1670,15 @@
                     ctx.strokeStyle = '#2563eb';
                     ctx.lineWidth = 2.5;
                     ctx.beginPath();
-                    ctx.moveTo(hullPoints[0].x, hullPoints[0].y);
-                    for (let i = 1; i < hullPoints.length; i++) {
-                        ctx.lineTo(hullPoints[i].x, hullPoints[i].y);
+                    ctx.moveTo(points[0].x, points[0].y);
+                    for (let i = 1; i < points.length; i++) {
+                        ctx.lineTo(points[i].x, points[i].y);
                     }
                     ctx.closePath();
                     ctx.stroke();
 
                     // Draw "ROI Zone" Label near topmost point
-                    let topmostPoint = hullPoints.reduce((top, pt) => pt.y < top.y ? pt : top, hullPoints[0]);
+                    let topmostPoint = points.reduce((top, pt) => pt.y < top.y ? pt : top, points[0]);
                     drawLabel('ROI Zone', topmostPoint.x, topmostPoint.y, '#2563eb');
 
                     // Draw Polygon vertices as handles
