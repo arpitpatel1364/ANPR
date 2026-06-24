@@ -17,6 +17,7 @@ aiohttp>=3.8.0
 python-socketio>=5.0.0
 
 # Database
+# Note: XAMPP is required for the database. Auto-installed via run.sh.
 mysql-connector-python
 reportlab
 Pillow>=8.0.0

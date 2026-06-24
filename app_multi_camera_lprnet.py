@@ -15,6 +15,10 @@ os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|max_delay;5000
 import json
 import sys
 import scripts.config_db as config_db
+from db_connection import wait_for_db_connection
+
+# Ensure DB is ready before doing anything else
+wait_for_db_connection(max_retries=15, retry_delay=2)
 
 def can_use_display():
     """

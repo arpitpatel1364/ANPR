@@ -30,7 +30,36 @@ Examples:
 EOF
 }
 
+check_and_install_xampp() {
+    if [ ! -d "/opt/lampp" ]; then
+        echo "XAMPP not found. Downloading and installing..."
+        if [ "$EUID" -ne 0 ]; then
+            SUDO="sudo"
+            echo "Requesting sudo privileges to install XAMPP..."
+        else
+            SUDO=""
+        fi
+        wget https://sourceforge.net/projects/xampp/files/XAMPP%20Linux/8.2.12/xampp-linux-x64-8.2.12-0-installer.run -O /tmp/xampp-installer.run
+        chmod +x /tmp/xampp-installer.run
+        $SUDO /tmp/xampp-installer.run --mode unattended
+        rm -f /tmp/xampp-installer.run
+        $SUDO /opt/lampp/lampp start
+        echo "XAMPP installed and started."
+    elif [ -x "/opt/lampp/lampp" ]; then
+        if ! pgrep -x "mysqld" > /dev/null; then
+            echo "Starting XAMPP MySQL..."
+            if [ "$EUID" -ne 0 ]; then
+                sudo /opt/lampp/lampp startmysql
+            else
+                /opt/lampp/lampp startmysql
+            fi
+            sleep 3 # Give MySQL a moment to start
+        fi
+    fi
+}
+
 run_backend() {
+    check_and_install_xampp
     cd "$SCRIPT_DIR"
     
     if [ ! -f "$VENV_ACTIVATE" ]; then
@@ -58,6 +87,7 @@ run_backend() {
 }
 
 run_admin() {
+    check_and_install_xampp
     cd "$SCRIPT_DIR/admin_panel"
     
     if [ ! -f "$VENV_ACTIVATE" ]; then
