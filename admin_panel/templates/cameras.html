@@ -993,13 +993,13 @@ function showWebRoiModal(frameData, cameraId, cameraName, isNewCamera = false, e
     if (frameData) {
         img.src = 'data:image/jpeg;base64,' + frameData;
     } else {
-        img.src = \`/static/images/roi_snapshots/\${cameraId}.jpg?t=\${Date.now()}\`;
+        img.src = `/static/images/roi_snapshots/${cameraId}.jpg?t=${Date.now()}`;
         
         // Add error handler in case snapshot doesn't exist
         img.onerror = function() {
             console.error('Snapshot not found. Waiting for backend to capture live frame...');
             setTimeout(() => {
-                img.src = \`/static/images/roi_snapshots/\${cameraId}.jpg?t=\${Date.now()}\`;
+                img.src = `/static/images/roi_snapshots/${cameraId}.jpg?t=${Date.now()}`;
             }, 2000);
         };
     }
