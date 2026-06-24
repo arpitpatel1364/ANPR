@@ -830,11 +830,21 @@ function setCameraRoi(event, cameraId) {
     event.preventDefault();
     const camera = camerasData.find(cam => cam.id == cameraId);
     const cameraName = camera ? camera.name : 'Unknown Camera';
-    showWebRoiModal(null, cameraId, cameraName);
+    
+    let existingRoi = null;
+    if (camera && camera.roi_polygon) {
+        try {
+            existingRoi = typeof camera.roi_polygon === 'string' ? JSON.parse(camera.roi_polygon) : camera.roi_polygon;
+        } catch (e) {
+            console.error('Failed to parse existing ROI', e);
+        }
+    }
+    
+    showWebRoiModal(null, cameraId, cameraName, false, existingRoi);
 }
 
 // Web-based ROI selection modal
-function showWebRoiModal(frameData, cameraId, cameraName, isNewCamera = false) {
+function showWebRoiModal(frameData, cameraId, cameraName, isNewCamera = false, existingRoi = null) {
     // Create modal HTML
     const modalHtml = `
         <div class="modal fade" id="roiModal" tabindex="-1" aria-labelledby="roiModalLabel" aria-hidden="true">
@@ -909,6 +919,13 @@ function showWebRoiModal(frameData, cameraId, cameraName, isNewCamera = false) {
 
         canvas.width = Math.round(originalWidth * imageScale);
         canvas.height = Math.round(originalHeight * imageScale);
+
+        if (existingRoi && Array.isArray(existingRoi) && existingRoi.length > 0) {
+            points = existingRoi.map(p => ({
+                x: (p.x !== undefined ? p.x : p[0]) * imageScale,
+                y: (p.y !== undefined ? p.y : p[1]) * imageScale
+            }));
+        }
 
         redrawCanvas();
     };
@@ -1096,6 +1113,12 @@ function showWebRoiModal(frameData, cameraId, cameraName, isNewCamera = false) {
                                     </span>
                                 `;
                             }
+                        }
+
+                        // Update local camerasData cache
+                        const camToUpdate = camerasData.find(c => c.id == cameraId);
+                        if (camToUpdate) {
+                            camToUpdate.roi_polygon = coordinates.map(pt => ({x: pt[0], y: pt[1]}));
                         }
 
                         // Refresh camera status without full page reload

@@ -407,6 +407,8 @@ def capture_test_frame():
         return jsonify({'success': False, 'message': 'No RTSP source provided'}), 400
     
     try:
+        import os
+        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|max_delay;500000|stimeout;5000000"
         import cv2
         import threading
         import base64
@@ -481,6 +483,7 @@ def preview_rtsp():
     import sys
     import os
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+    os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|max_delay;500000|stimeout;5000000"
     import cv2
     import base64
     import threading
