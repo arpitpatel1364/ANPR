@@ -13,7 +13,7 @@ import logging
 
 # Default database configuration
 DEFAULT_DB_CONFIG = {
-    'host': 'localhost',
+    'host': '127.0.0.1',
     'port': 3306,
     'user': 'root',
     'password': '',  # Default XAMPP MySQL password (empty)
