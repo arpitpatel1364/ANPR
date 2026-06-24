@@ -222,6 +222,19 @@ function check_xampp() {
     
     if [[ $started -eq 0 ]]; then
         warn "Could not identify local database service (XAMPP, MySQL, or MariaDB)."
+        info "Downloading and installing XAMPP..."
+        wget https://sourceforge.net/projects/xampp/files/XAMPP%20Linux/8.2.12/xampp-linux-x64-8.2.12-0-installer.run -O /tmp/xampp-installer.run
+        chmod +x /tmp/xampp-installer.run
+        $SUDO /tmp/xampp-installer.run --mode unattended
+        rm -f /tmp/xampp-installer.run
+        info "XAMPP installation completed."
+        
+        if [[ -x /opt/lampp/lampp ]]; then
+            info "Starting XAMPP MySQL..."
+            $SUDO /opt/lampp/lampp startmysql || warn "Failed to start XAMPP MySQL after installation"
+        else
+            die "XAMPP was not installed successfully."
+        fi
     fi
     
     # Wait for MySQL to become ready
@@ -310,6 +323,7 @@ function install_services() {
     if [ -f "$SCRIPT_DIR/xampp.service" ]; then
         cp "$SCRIPT_DIR/xampp.service" /etc/systemd/system/
         systemctl enable xampp.service
+        systemctl start xampp.service || warn "xampp.service failed to start"
     fi
 
     # Backend Service
