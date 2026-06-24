@@ -4,6 +4,10 @@ Camera status checking utilities
 import cv2
 import subprocess
 import time
+import os
+
+# Prevent OpenCV from hanging on bad RTSP streams
+os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|max_delay;500000|stimeout;5000000"
 from typing import Dict, Any, Optional
 from datetime import datetime
 
