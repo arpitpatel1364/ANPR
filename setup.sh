@@ -27,7 +27,7 @@ function install_system_deps() {
     if command -v apt-get &>/dev/null; then
         info "Installing system packages..."
         apt-get update -y
-        apt-get install -y python3-venv python3-pip ffmpeg libsm6 libxext6 libfontconfig1 libxrender1 libgl1-mesa-glx git curl wget || warn "Some system packages failed to install"
+        apt-get install -y python3-venv python3-pip ffmpeg libsm6 libxext6 libfontconfig1 libxrender1 libgl1-mesa-glx git curl wget default-mysql-client netcat-openbsd || warn "Some system packages failed to install"
     else
         warn "apt-get not found — skipping system package installation"
     fi
@@ -91,28 +91,181 @@ function create_python_env() {
     fi
 }
 
-function check_xampp() {
-    info "Checking if MySQL/XAMPP is running..."
-    if ! pgrep -x "mysqld" > /dev/null; then
-        if [ -x /opt/lampp/lampp ]; then
-            warn "MySQL is not running. Attempting to start XAMPP MySQL..."
-            /opt/lampp/lampp startmysql || warn "Could not start XAMPP MySQL automatically."
-        else
-            warn "MySQL (mysqld) doesn't appear to be running. Please start XAMPP or your database service."
+function validate_db_env() {
+    info "Validating database environment variables..."
+    # Set default values if not defined to ensure out-of-the-box operation
+    export DB_HOST="${DB_HOST:-127.0.0.1}"
+    export DB_PORT="${DB_PORT:-3306}"
+    export DB_USER="${DB_USER:-root}"
+    if [[ -z "${DB_PASSWORD+x}" ]]; then
+        export DB_PASSWORD=""
+    fi
+    export DB_NAME="${DB_NAME:-anpr_system}"
+
+    # Verify that they exist (are set) and that non-password variables are not empty.
+    local missing_vars=()
+    for var in DB_HOST DB_PORT DB_USER DB_NAME; do
+        if [[ -z "${!var:-}" ]]; then
+            missing_vars+=("$var")
         fi
+    done
+    if [[ -z "${DB_PASSWORD+x}" ]]; then
+        missing_vars+=("DB_PASSWORD")
+    fi
+    
+    if [[ ${#missing_vars[@]} -ne 0 ]]; then
+        err "The following database environment variables are missing or empty: ${missing_vars[*]}"
+        err "Please define them before running setup."
+        die "Database configuration validation failed."
+    fi
+    
+    info "Database configuration validated:"
+    info "  DB_HOST=$DB_HOST"
+    info "  DB_PORT=$DB_PORT"
+    info "  DB_USER=$DB_USER"
+    info "  DB_NAME=$DB_NAME"
+}
+
+function is_mysql_ready() {
+    # First check if mysqladmin responds to ping
+    if command -v mysqladmin &>/dev/null; then
+        mysqladmin ping -h"${DB_HOST}" -P"${DB_PORT}" --silent
+    elif command -v nc &>/dev/null; then
+        nc -z "${DB_HOST}" "${DB_PORT}" &>/dev/null
     else
-        info "MySQL service is running."
+        timeout 1 bash -c "cat < /dev/null > /dev/tcp/${DB_HOST}/${DB_PORT}" &>/dev/null
     fi
 }
 
-function init_database() {
-    check_xampp
-    info "Initializing database (creating database & tables)"
-    if [ -f "scripts/init_database.py" ]; then
-        source "$VENV_DIR/bin/activate"
-        python scripts/init_database.py || warn "Database init failed"
+function run_mysql_diagnostics() {
+    err "=== MySQL Diagnostics ==="
+    local SUDO=""
+    if [[ $EUID -ne 0 ]]; then
+        SUDO="sudo"
+    fi
+    
+    err "Checking if port ${DB_PORT} is listening:"
+    if command -v ss &>/dev/null; then
+        $SUDO ss -tulpn | grep "${DB_PORT}" || true
+    elif command -v netstat &>/dev/null; then
+        $SUDO netstat -tulpn | grep "${DB_PORT}" || true
+    fi
+    
+    err "Checking running MySQL processes:"
+    ps aux | grep -E "mysqld|lampp|mariadb" | grep -v grep || true
+    
+    err "Checking service statuses:"
+    if [[ -x /opt/lampp/lampp ]]; then
+        $SUDO /opt/lampp/lampp status || true
+    fi
+    if systemctl list-units --all --type=service | grep -q "mysql.service"; then
+        systemctl status mysql --no-pager || true
+    fi
+    if systemctl list-units --all --type=service | grep -q "mariadb.service"; then
+        systemctl status mariadb --no-pager || true
+    fi
+    err "========================="
+}
+
+function wait_for_mysql() {
+    local timeout_secs=${1:-60}
+    info "Waiting up to $timeout_secs seconds for MySQL to become ready..."
+    
+    local elapsed=0
+    while [[ $elapsed -lt $timeout_secs ]]; do
+        if is_mysql_ready; then
+            info "MySQL is ready and accepting connections!"
+            return 0
+        fi
+        sleep 2
+        elapsed=$((elapsed + 2))
+        echo -n "."
+    done
+    echo ""
+    
+    err "MySQL did not become ready on ${DB_HOST}:${DB_PORT} within $timeout_secs seconds."
+    run_mysql_diagnostics
+    die "Database connection failed. Cannot proceed."
+}
+
+function check_xampp() {
+    info "Checking if MySQL/XAMPP is running..."
+    
+    validate_db_env
+    
+    if is_mysql_ready; then
+        info "MySQL service is running and accepting connections."
+        return 0
+    fi
+    
+    warn "MySQL is not responding. Attempting to start database service..."
+    
+    local SUDO=""
+    if [[ $EUID -ne 0 ]]; then
+        SUDO="sudo"
+    fi
+    
+    local started=0
+    if [[ -x /opt/lampp/lampp ]]; then
+        info "Found XAMPP. Starting XAMPP MySQL..."
+        $SUDO /opt/lampp/lampp startmysql || warn "Failed to start XAMPP MySQL"
+        started=1
+    elif systemctl list-units --all --type=service | grep -q "mysql.service"; then
+        info "Found mysql.service. Starting mysql service..."
+        $SUDO systemctl start mysql || warn "Failed to start mysql.service"
+        started=1
+    elif systemctl list-units --all --type=service | grep -q "mariadb.service"; then
+        info "Found mariadb.service. Starting mariadb service..."
+        $SUDO systemctl start mariadb || warn "Failed to start mariadb.service"
+        started=1
+    fi
+    
+    if [[ $started -eq 0 ]]; then
+        warn "Could not identify local database service (XAMPP, MySQL, or MariaDB)."
+    fi
+    
+    # Wait for MySQL to become ready
+    wait_for_mysql 60
+}
+
+function verify_mysql_port() {
+    info "Verifying that port ${DB_PORT} is listening on ${DB_HOST}..."
+    local port_open=0
+    
+    if command -v nc &>/dev/null; then
+        if nc -z "${DB_HOST}" "${DB_PORT}" &>/dev/null; then
+            port_open=1
+        fi
+    elif command -v ss &>/dev/null; then
+        if ss -lnt | grep -q "${DB_PORT}"; then
+            port_open=1
+        fi
     else
-        warn "scripts/init_database.py not found"
+        # Fallback to bash TCP connection check
+        if timeout 1 bash -c "cat < /dev/null > /dev/tcp/${DB_HOST}/${DB_PORT}" &>/dev/null; then
+            port_open=1
+        fi
+    fi
+    
+    if [[ $port_open -eq 0 ]]; then
+        err "Port ${DB_PORT} is not open on ${DB_HOST}!"
+        run_mysql_diagnostics
+        die "Port validation failed. MySQL database service must be listening on port ${DB_PORT}."
+    fi
+    info "Port verification successful: MySQL is listening on port ${DB_PORT}."
+}
+
+function init_database() {
+    validate_db_env
+    check_xampp
+    verify_mysql_port
+    
+    info "Initializing database (creating database & tables)"
+    if [[ -f "scripts/init_database.py" ]]; then
+        source "$VENV_DIR/bin/activate"
+        python scripts/init_database.py || die "Database initialization failed"
+    else
+        die "scripts/init_database.py not found"
     fi
 }
 
@@ -163,8 +316,8 @@ function install_services() {
     tee /etc/systemd/system/anpr-multi-camera.service > /dev/null <<EOF
 [Unit]
 Description=ANPR Multi-Camera Service
-After=network.target
-Wants=xampp.service
+After=network.target xampp.service
+Requires=xampp.service
 
 [Service]
 Type=simple
@@ -198,8 +351,8 @@ EOF
     tee /etc/systemd/system/anpr-admin-panel.service > /dev/null <<EOF
 [Unit]
 Description=ANPR Admin Panel Web Interface
-After=network.target
-Wants=xampp.service
+After=network.target xampp.service
+Requires=xampp.service
 
 [Service]
 Type=simple

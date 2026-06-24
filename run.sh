@@ -30,36 +30,89 @@ Examples:
 EOF
 }
 
-check_and_install_xampp() {
-    if [ ! -d "/opt/lampp" ]; then
-        echo "XAMPP not found. Downloading and installing..."
-        if [ "$EUID" -ne 0 ]; then
-            SUDO="sudo"
-            echo "Requesting sudo privileges to install XAMPP..."
-        else
-            SUDO=""
+is_mysql_ready() {
+    # First check if mysqladmin responds to ping
+    if command -v mysqladmin &>/dev/null; then
+        mysqladmin ping -h"${DB_HOST:-127.0.0.1}" -P"${DB_PORT:-3306}" --silent
+    elif command -v nc &>/dev/null; then
+        nc -z "${DB_HOST:-127.0.0.1}" "${DB_PORT:-3306}" &>/dev/null
+    else
+        timeout 1 bash -c "cat < /dev/null > /dev/tcp/${DB_HOST:-127.0.0.1}/${DB_PORT:-3306}" &>/dev/null
+    fi
+}
+
+wait_for_mysql() {
+    local timeout_secs=${1:-60}
+    echo "Waiting up to $timeout_secs seconds for MySQL to become ready..."
+    local elapsed=0
+    while [[ $elapsed -lt $timeout_secs ]]; do
+        if is_mysql_ready; then
+            echo "MySQL is ready and accepting connections!"
+            return 0
         fi
+        sleep 2
+        elapsed=$((elapsed + 2))
+        echo -n "."
+    done
+    echo ""
+    echo "Error: MySQL did not become ready on ${DB_HOST:-127.0.0.1}:${DB_PORT:-3306} within $timeout_secs seconds."
+    return 1
+}
+
+ensure_mysql_running() {
+    # Set default values if not defined to ensure out-of-the-box operation
+    export DB_HOST="${DB_HOST:-127.0.0.1}"
+    export DB_PORT="${DB_PORT:-3306}"
+    export DB_USER="${DB_USER:-root}"
+    if [[ -z "${DB_PASSWORD+x}" ]]; then
+        export DB_PASSWORD=""
+    fi
+    export DB_NAME="${DB_NAME:-anpr_system}"
+
+    if is_mysql_ready; then
+        echo "MySQL is running and accepting connections."
+        return 0
+    fi
+
+    echo "MySQL is not responding. Attempting to start database service..."
+
+    local SUDO=""
+    if [ "$EUID" -ne 0 ]; then
+        SUDO="sudo"
+    fi
+
+    local started=0
+    # Try starting XAMPP/MySQL/MariaDB if installed
+    if [ -x "/opt/lampp/lampp" ]; then
+        echo "Starting XAMPP MySQL..."
+        $SUDO /opt/lampp/lampp startmysql || echo "Warning: Failed to start XAMPP MySQL"
+        started=1
+    elif systemctl list-units --all --type=service | grep -q "mysql.service"; then
+        echo "Starting mysql.service..."
+        $SUDO systemctl start mysql || echo "Warning: Failed to start mysql.service"
+        started=1
+    elif systemctl list-units --all --type=service | grep -q "mariadb.service"; then
+        echo "Starting mariadb.service..."
+        $SUDO systemctl start mariadb || echo "Warning: Failed to start mariadb.service"
+        started=1
+    fi
+
+    # Fallback to installing XAMPP if no service is found and /opt/lampp is missing
+    if [ ! -d "/opt/lampp" ] && [ $started -eq 0 ]; then
+        echo "No database service found. Downloading and installing XAMPP..."
         wget https://sourceforge.net/projects/xampp/files/XAMPP%20Linux/8.2.12/xampp-linux-x64-8.2.12-0-installer.run -O /tmp/xampp-installer.run
         chmod +x /tmp/xampp-installer.run
         $SUDO /tmp/xampp-installer.run --mode unattended
         rm -f /tmp/xampp-installer.run
         $SUDO /opt/lampp/lampp start
         echo "XAMPP installed and started."
-    elif [ -x "/opt/lampp/lampp" ]; then
-        if ! pgrep -x "mysqld" > /dev/null; then
-            echo "Starting XAMPP MySQL..."
-            if [ "$EUID" -ne 0 ]; then
-                sudo /opt/lampp/lampp startmysql
-            else
-                /opt/lampp/lampp startmysql
-            fi
-            sleep 3 # Give MySQL a moment to start
-        fi
     fi
+
+    wait_for_mysql 60
 }
 
 run_backend() {
-    check_and_install_xampp
+    ensure_mysql_running
     cd "$SCRIPT_DIR"
     
     if [ ! -f "$VENV_ACTIVATE" ]; then
@@ -87,7 +140,7 @@ run_backend() {
 }
 
 run_admin() {
-    check_and_install_xampp
+    ensure_mysql_running
     cd "$SCRIPT_DIR/admin_panel"
     
     if [ ! -f "$VENV_ACTIVATE" ]; then
