@@ -216,7 +216,7 @@ def bulk_add_plates():
                 
                 # Broadcast reload signal to ANPR service for live updates
                 broadcast_reload_plates()
-                flash(f'✅ Live plate list updated in ANPR system', 'info')
+                flash(f'plate list updated in ANPR system', 'info')
             
             if duplicates:
                 flash(f'{len(duplicates)} plates were already in the list', 'warning')
