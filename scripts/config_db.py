@@ -49,53 +49,62 @@ def load_config_from_db():
             db.execute("SELECT setting_key, setting_value FROM system_settings")
             settings = db.fetchall()
             
-            # Auto-populate defaults if database is completely empty
-            if not settings:
-                print("⚠️ Database configuration is empty. Auto-populating with default settings...")
-                default_settings = {
-                    'system_mode': 'multi_camera',
-                    'global_settings': {
-                        "fps_limit": 30,
-                        "frame_skip": 2,
-                        "csv_file": "plate_detections.csv",
-                        "allowed_plates": "allowed_plates.json",
-                        "save_dir": "./detected_plates"
-                    },
-                    'display_settings': {
-                        "headless_mode": False,
-                        "show_fps": True,
-                        "show_plate_count": True,
-                        "show_verification_stats": True,
-                        "window_title": "Multi-Camera ANPR System",
-                        "grid_layout": "2x2",
-                        "show_camera_names": True
-                    },
-                    'headless_settings': {
-                        "enabled": False,
-                        "log_level": "INFO",
-                        "save_frames": False,
-                        "frame_save_interval": 30,
-                        "log_file": "anpr_headless.log",
-                        "status_update_interval": 10
-                    }
+            # Ensure all required defaults exist (self-healing for partial/corrupt databases)
+            existing_keys = [row['setting_key'] for row in settings]
+            default_settings = {
+                'system_mode': 'multi_camera',
+                'global_settings': {
+                    "fps_limit": 30,
+                    "frame_skip": 2,
+                    "csv_file": "plate_detections.csv",
+                    "allowed_plates": "allowed_plates.json",
+                    "save_dir": "./detected_plates"
+                },
+                'display_settings': {
+                    "headless_mode": False,
+                    "show_fps": True,
+                    "show_plate_count": True,
+                    "show_verification_stats": True,
+                    "window_title": "Multi-Camera ANPR System",
+                    "grid_layout": "2x2",
+                    "show_camera_names": True
+                },
+                'headless_settings': {
+                    "enabled": False,
+                    "log_level": "INFO",
+                    "save_frames": False,
+                    "frame_save_interval": 30,
+                    "log_file": "anpr_headless.log",
+                    "status_update_interval": 10
                 }
-                for key, val in default_settings.items():
+            }
+            
+            needs_refresh = False
+            for key, val in default_settings.items():
+                if key not in existing_keys:
+                    print(f"⚠️ Missing setting '{key}' detected. Auto-populating...")
                     val_str = json.dumps(val) if isinstance(val, (dict, list)) else str(val)
-                    db.execute(
-                        "INSERT INTO system_settings (setting_key, setting_value) VALUES (%s, %s)",
-                        (key, val_str)
-                    )
-                
-                # Default camera if none exist
-                db.execute("SELECT COUNT(*) as count FROM cameras")
-                if db.fetchone()['count'] == 0:
-                    print("⚠️ No cameras found. Adding default Webcam_001...")
-                    db.execute("""
-                        INSERT INTO cameras (camera_id, name, location, rtsp_source, enabled, dedup_window, confidence_threshold)
-                        VALUES ('Webcam_001', 'Local Webcam', 'Local PC', '0', 1, 30, 0.75)
-                    """)
-                
-                # Fetch again now that defaults are inserted
+                    try:
+                        db.execute(
+                            "INSERT INTO system_settings (setting_key, setting_value) VALUES (%s, %s)",
+                            (key, val_str)
+                        )
+                        print(f"✅ Successfully inserted '{key}' into DB")
+                        needs_refresh = True
+                    except Exception as e:
+                        print(f"❌ FAILED to insert '{key}': {e}")
+            
+            # Default camera if none exist
+            db.execute("SELECT COUNT(*) as count FROM cameras")
+            if db.fetchone()['count'] == 0:
+                print("⚠️ No cameras found. Adding default Webcam_001...")
+                db.execute("""
+                    INSERT INTO cameras (camera_id, name, location, rtsp_source, enabled, dedup_window, confidence_threshold)
+                    VALUES ('Webcam_001', 'Local Webcam', 'Local PC', '0', 1, 30, 0.75)
+                """)
+            
+            if needs_refresh:
+                # Fetch again now that missing defaults are inserted
                 db.execute("SELECT setting_key, setting_value FROM system_settings")
                 settings = db.fetchall()
 
