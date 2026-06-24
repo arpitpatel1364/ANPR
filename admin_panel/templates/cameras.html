@@ -1270,8 +1270,7 @@
 
                 // Check if dragging the whole shape
                 if (points.length >= 3) {
-                    const hull = getConvexHull(points);
-                    if (isPointInPolygon({ x, y }, hull)) {
+                    if (isPointInPolygon({ x, y }, points)) {
                         isDraggingPolygon = true;
                         dragStartX = x;
                         dragStartY = y;
@@ -1286,10 +1285,11 @@
                     if (points.length >= 3) {
                         const firstPoint = points[0];
                         const distance = Math.sqrt((x - firstPoint.x) ** 2 + (y - firstPoint.y) ** 2);
-                        if (distance < 20) { // Increased hit radius for easier closing
-                            const hull = getConvexHull(points);
-                            savePolygonRoi(cameraId, hull);
-                            modal.hide();
+                        if (distance < 20) { // Click first point to close shape
+                            points = getConvexHull(points);
+                            activeTool = 'select';
+                            updateToolbarUI();
+                            redrawCanvas();
                             return;
                         }
                     }
@@ -1359,7 +1359,7 @@
                     }
                     if (hoverPt) {
                         cursor = 'pointer';
-                    } else if (points.length >= 3 && isPointInPolygon({ x: mouseX, y: mouseY }, getConvexHull(points))) {
+                    } else if (points.length >= 3 && isPointInPolygon({ x: mouseX, y: mouseY }, points)) {
                         cursor = 'move';
                     } else if (activeTool === 'polygon') {
                         cursor = 'crosshair';
@@ -1490,13 +1490,15 @@
             }
         });
 
-        // Double click anywhere to quickly close and save (for polygon)
+        // Double click anywhere to connect last point to first point (for polygon)
         canvas.addEventListener('dblclick', function (e) {
             if (!isEditMode) return;
             if (roiType === 'polygon' && points.length >= 3) {
-                const hull = getConvexHull(points);
-                savePolygonRoi(cameraId, hull);
-                modal.hide();
+                // Connect last point to first point and convert to convex hull (remove internal points)
+                points = getConvexHull(points);
+                activeTool = 'select';
+                updateToolbarUI();
+                redrawCanvas();
             }
         });
 
@@ -1514,8 +1516,7 @@
         document.getElementById('saveRoi').addEventListener('click', function () {
             if (roiType === 'polygon') {
                 if (points.length >= 3) {
-                    const hull = getConvexHull(points);
-                    savePolygonRoi(cameraId, hull);
+                    savePolygonRoi(cameraId, points);
                     modal.hide();
                 } else {
                     alert('Please complete the ROI selection first. A polygon needs at least 3 points.');
@@ -1559,47 +1560,70 @@
             updateToolbarUI();
 
             if (roiType === 'polygon' && points.length > 0) {
-                let previewPoints = [...points];
-                if (mx !== -1 && my !== -1) {
-                    previewPoints.push({ x: mx, y: my });
-                }
-                let hullPoints = getConvexHull(previewPoints);
-
-                // Draw Polygon Fill
-                ctx.beginPath();
-                ctx.moveTo(hullPoints[0].x, hullPoints[0].y);
-                for (let i = 1; i < hullPoints.length; i++) {
-                    ctx.lineTo(hullPoints[i].x, hullPoints[i].y);
-                }
-                ctx.closePath();
-                ctx.fillStyle = 'rgba(37, 99, 235, 0.2)'; // Sleek transparent blue
-                ctx.fill();
-
-                // Draw Polygon Border
-                ctx.strokeStyle = '#2563eb'; // Sleek vibrant blue
-                ctx.lineWidth = 2.5;
-                ctx.beginPath();
-                ctx.moveTo(hullPoints[0].x, hullPoints[0].y);
-                for (let i = 1; i < hullPoints.length; i++) {
-                    ctx.lineTo(hullPoints[i].x, hullPoints[i].y);
-                }
-                ctx.closePath();
-                ctx.stroke();
-
-                // Draw "ROI Zone" Label near topmost point
-                let topmostPoint = hullPoints.reduce((top, pt) => pt.y < top.y ? pt : top, hullPoints[0]);
-                drawLabel('ROI Zone', topmostPoint.x, topmostPoint.y, '#2563eb');
-
-                // Draw Polygon vertices as handles
-                points.forEach((point) => {
+                if (activeTool === 'polygon') {
+                    // Simple line-by-line drawing (no rubbery convex-hull during drawing)
+                    ctx.strokeStyle = '#2563eb'; // Vibrant blue
+                    ctx.lineWidth = 2.5;
                     ctx.beginPath();
-                    ctx.arc(point.x, point.y, 6, 0, 2 * Math.PI);
-                    ctx.fillStyle = '#ffffff';
-                    ctx.fill();
-                    ctx.strokeStyle = '#2563eb';
-                    ctx.lineWidth = 2;
+                    ctx.moveTo(points[0].x, points[0].y);
+                    for (let i = 1; i < points.length; i++) {
+                        ctx.lineTo(points[i].x, points[i].y);
+                    }
+                    if (mx !== -1 && my !== -1) {
+                        ctx.lineTo(mx, my);
+                    }
                     ctx.stroke();
-                });
+
+                    // Draw vertices as handles
+                    points.forEach((point) => {
+                        ctx.beginPath();
+                        ctx.arc(point.x, point.y, 6, 0, 2 * Math.PI);
+                        ctx.fillStyle = '#ffffff';
+                        ctx.fill();
+                        ctx.strokeStyle = '#2563eb';
+                        ctx.lineWidth = 2;
+                        ctx.stroke();
+                    });
+                } else {
+                    // Completed / edit mode - draw closed convex hull
+                    let hullPoints = getConvexHull(points);
+
+                    // Draw Polygon Fill
+                    ctx.beginPath();
+                    ctx.moveTo(hullPoints[0].x, hullPoints[0].y);
+                    for (let i = 1; i < hullPoints.length; i++) {
+                        ctx.lineTo(hullPoints[i].x, hullPoints[i].y);
+                    }
+                    ctx.closePath();
+                    ctx.fillStyle = 'rgba(37, 99, 235, 0.2)'; // Sleek transparent blue
+                    ctx.fill();
+
+                    // Draw Polygon Border
+                    ctx.strokeStyle = '#2563eb';
+                    ctx.lineWidth = 2.5;
+                    ctx.beginPath();
+                    ctx.moveTo(hullPoints[0].x, hullPoints[0].y);
+                    for (let i = 1; i < hullPoints.length; i++) {
+                        ctx.lineTo(hullPoints[i].x, hullPoints[i].y);
+                    }
+                    ctx.closePath();
+                    ctx.stroke();
+
+                    // Draw "ROI Zone" Label near topmost point
+                    let topmostPoint = hullPoints.reduce((top, pt) => pt.y < top.y ? pt : top, hullPoints[0]);
+                    drawLabel('ROI Zone', topmostPoint.x, topmostPoint.y, '#2563eb');
+
+                    // Draw Polygon vertices as handles
+                    points.forEach((point) => {
+                        ctx.beginPath();
+                        ctx.arc(point.x, point.y, 6, 0, 2 * Math.PI);
+                        ctx.fillStyle = '#ffffff';
+                        ctx.fill();
+                        ctx.strokeStyle = '#2563eb';
+                        ctx.lineWidth = 2;
+                        ctx.stroke();
+                    });
+                }
             } else if (roiType === 'box' && boxRect) {
                 let nx = boxRect.x, ny = boxRect.y, nw = boxRect.w, nh = boxRect.h;
                 if (nw < 0) { nx += nw; nw = Math.abs(nw); }
