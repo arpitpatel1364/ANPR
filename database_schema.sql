@@ -50,7 +50,7 @@ CREATE TABLE IF NOT EXISTS users (
     username VARCHAR(100) NOT NULL UNIQUE,
     password_hash VARCHAR(255) NOT NULL,
     email VARCHAR(255) DEFAULT NULL,
-    role ENUM('admin', 'viewer') DEFAULT 'viewer',
+    role ENUM('admin', 'viewer', 'superadmin') DEFAULT 'viewer',
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -69,10 +69,21 @@ CREATE TABLE IF NOT EXISTS cameras (
     dedup_window INT DEFAULT 30,
     confidence_threshold DECIMAL(3,2) DEFAULT 0.80,
     api_enabled BOOLEAN DEFAULT FALSE,
+    api_settings TEXT DEFAULT NULL,
+    roi_polygon TEXT DEFAULT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_camera_id (camera_id),
     INDEX idx_enabled (enabled)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Table: system_settings
+-- Stores application configuration dynamically
+CREATE TABLE IF NOT EXISTS system_settings (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    setting_key VARCHAR(100) NOT NULL UNIQUE,
+    setting_value TEXT NOT NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Insert default admin user (password: admin123 - change this!)
