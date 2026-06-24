@@ -14,7 +14,7 @@ import logging
 # Default database configuration
 DEFAULT_DB_CONFIG = {
     'host': 'localhost',
-    'port': 3306,
+    'port': 3307,
     'user': 'root',
     'password': '',  # Default XAMPP MySQL password (empty)
     'database': 'anpr_system',
@@ -107,14 +107,40 @@ def get_connection():
     try:
         pool = get_connection_pool()
         if pool is None:
-            return None
+            # Try to recreate pool if it was None
+            global _connection_pool
+            with _pool_lock:
+                _connection_pool = None
+            pool = get_connection_pool()
+            if pool is None:
+                return None
         
         connection = pool.get_connection()
+        if not connection.is_connected():
+            connection.ping(reconnect=True, attempts=3, delay=2)
         return connection
         
     except Error as e:
         print(f"❌ Error getting database connection: {e}")
         return None
+
+def wait_for_db_connection(max_retries=30, retry_delay=2):
+    """Wait for database to become available (useful on startup)"""
+    import time
+    for i in range(max_retries):
+        try:
+            pool = get_connection_pool()
+            if pool:
+                conn = pool.get_connection()
+                conn.ping(reconnect=True, attempts=1, delay=1)
+                conn.close()
+                print("✅ Database is ready!")
+                return True
+        except Exception:
+            pass
+        print(f"⏳ Waiting for database to start... (Attempt {i+1}/{max_retries})")
+        time.sleep(retry_delay)
+    return False
 
 
 def execute_query(query: str, params: Optional[tuple] = None, fetch: bool = False) -> Optional[Any]:
@@ -139,10 +165,21 @@ def execute_query(query: str, params: Optional[tuple] = None, fetch: bool = Fals
         
         cursor = connection.cursor(dictionary=True)
         
-        if params:
-            cursor.execute(query, params)
-        else:
-            cursor.execute(query)
+        try:
+            if params:
+                cursor.execute(query, params)
+            else:
+                cursor.execute(query)
+        except Error as e:
+            # If connection was lost, try to ping and retry once
+            if e.errno == 2006 or "MySQL server has gone away" in str(e):
+                connection.ping(reconnect=True, attempts=3, delay=2)
+                if params:
+                    cursor.execute(query, params)
+                else:
+                    cursor.execute(query)
+            else:
+                raise e
         
         if fetch:
             result = cursor.fetchall()

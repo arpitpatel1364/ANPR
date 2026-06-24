@@ -153,11 +153,18 @@ function install_services() {
     SERVICE_GROUP=$(id -gn "$SERVICE_USER")
     USER_HOME=$(eval echo ~$SERVICE_USER)
 
+    # XAMPP Service
+    if [ -f "$SCRIPT_DIR/xampp.service" ]; then
+        cp "$SCRIPT_DIR/xampp.service" /etc/systemd/system/
+        systemctl enable xampp.service
+    fi
+
     # Backend Service
     tee /etc/systemd/system/anpr-multi-camera.service > /dev/null <<EOF
 [Unit]
 Description=ANPR Multi-Camera Service
-After=network.target
+After=network.target xampp.service
+Requires=xampp.service
 
 [Service]
 Type=simple
@@ -191,7 +198,8 @@ EOF
     tee /etc/systemd/system/anpr-admin-panel.service > /dev/null <<EOF
 [Unit]
 Description=ANPR Admin Panel Web Interface
-After=network.target
+After=network.target xampp.service
+Requires=xampp.service
 
 [Service]
 Type=simple

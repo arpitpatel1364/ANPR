@@ -276,6 +276,12 @@ if __name__ == '__main__':
     print("=" * 60)
     print("🚀 Starting ANPR Admin Panel Server...")
     print("=" * 60)
+    
+    # Wait for database before starting the server
+    from db_connection import wait_for_db_connection
+    if not wait_for_db_connection():
+        print("❌ Could not connect to database after retries. Starting anyway, but functionality will be limited.")
+        
     print(f"📍 Server will be available at: http://0.0.0.0:8084")
     print(f"🔧 Debug mode: {'ON' if True else 'OFF'}")
     print(f"🔄 Auto-reload: {'ON' if True else 'OFF'}")
