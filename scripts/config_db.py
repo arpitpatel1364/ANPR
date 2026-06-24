@@ -7,6 +7,8 @@ from db_connection import DatabaseConnection
 
 def load_config_from_db():
     """Load configuration from database to match the structure of config.json"""
+    print("DEBUG: ENTERING load_config_from_db")
+    
     config = {
         'global_settings': {},
         'display_settings': {},
