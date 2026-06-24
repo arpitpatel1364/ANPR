@@ -1496,10 +1496,17 @@
         canvas.addEventListener('dblclick', function (e) {
             if (!isEditMode) return;
             if (roiType === 'polygon' && points.length >= 3) {
-                // Connect last point to first point and convert to convex hull (remove internal points)
-                points = getConvexHull(points);
-                activeTool = 'select';
-                updateToolbarUI();
+                // Remove the extra two points added by the double-click event clicks
+                points.pop();
+                points.pop();
+                if (points.length >= 3) {
+                    // Connect last point to first point and convert to convex hull (remove internal points)
+                    points = getConvexHull(points);
+                    activeTool = 'select';
+                    updateToolbarUI();
+                } else {
+                    points = [];
+                }
                 redrawCanvas();
             }
         });
