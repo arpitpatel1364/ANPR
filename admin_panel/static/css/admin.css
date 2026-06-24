@@ -869,6 +869,28 @@ body {
     color: var(--secondary);
 }
 
+.btn-outline-success {
+    border: 2px solid var(--success);
+    color: var(--success);
+    background: transparent;
+}
+
+.btn-outline-success:hover {
+    background: var(--success);
+    color: var(--secondary);
+}
+
+.btn-outline-danger {
+    border: 2px solid var(--danger);
+    color: var(--danger);
+    background: transparent;
+}
+
+.btn-outline-danger:hover {
+    background: var(--danger);
+    color: var(--secondary);
+}
+
 .btn-success {
     background: linear-gradient(135deg, #198754, #157347);
     border: none;
@@ -1721,7 +1743,7 @@ body {
 }
 
 .camera-card .dropdown-item {
-    padding: 0.875rem 1.25rem;
+    padding: 0.75rem 1.25rem;
     color: var(--gray-700);
     transition: none;
     display: flex;
@@ -1729,6 +1751,16 @@ body {
     font-size: var(--font-size-sm);
     font-weight: 500;
     border-radius: 0;
+}
+
+.camera-card .dropdown-item i {
+    width: 1.25rem;
+    font-size: 1.1rem;
+    margin-right: 0.75rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
 }
 
 .camera-card .dropdown-item:hover {
