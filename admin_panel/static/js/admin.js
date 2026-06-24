@@ -253,7 +253,13 @@ function updateConnectionStatus(status, message) {
     const statusIndicator = document.getElementById('connection-status');
     if (statusIndicator) {
         statusIndicator.className = `connection-status ${status}`;
-        statusIndicator.textContent = message;
+        let iconClass = 'bi-wifi-off';
+        if (status === 'connected') {
+            iconClass = 'bi-wifi';
+        } else if (status === 'connecting') {
+            iconClass = 'bi-arrow-repeat spin';
+        }
+        statusIndicator.innerHTML = `<i class="bi ${iconClass} me-1"></i><span class="status-text">${message}</span>`;
     }
     
     // Update page title with connection status
