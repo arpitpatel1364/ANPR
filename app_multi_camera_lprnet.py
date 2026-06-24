@@ -20,6 +20,10 @@ from db_connection import wait_for_db_connection
 # Ensure DB is ready before doing anything else
 wait_for_db_connection(max_retries=15, retry_delay=2)
 
+# ✅ AUTO-FIX: Ensure system_mode is set to multi_camera
+from scripts.config_db import ensure_system_mode_set
+ensure_system_mode_set()
+
 def can_use_display():
     """
     Check if a display is actually available and accessible.

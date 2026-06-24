@@ -5,6 +5,21 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from db_connection import DatabaseConnection
 
+def ensure_system_mode_set():
+    """Ensure system_mode is set to 'multi_camera' in the database."""
+    try:
+        with DatabaseConnection() as db:
+            db.execute("SELECT setting_value FROM system_settings WHERE setting_key = 'system_mode'")
+            result = db.fetchone()
+            if not result:
+                print("⚠️ AUTO-FIX: 'system_mode' not found in database. Inserting 'multi_camera'...")
+                val_str = json.dumps("multi_camera")
+                db.execute(
+                    "INSERT INTO system_settings (setting_key, setting_value) VALUES (%s, %s)",
+                    ('system_mode', val_str)
+                )
+    except Exception as e:
+        print(f"❌ Error ensuring system_mode: {e}")
 def load_config_from_db():
     """Load configuration from database to match the structure of config.json"""
     print("DEBUG: ENTERING load_config_from_db")
