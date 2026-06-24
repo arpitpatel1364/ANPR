@@ -111,15 +111,7 @@ def load_config_from_db():
                     except Exception as e:
                         print(f"❌ FAILED to insert '{key}': {e}")
             
-            # Default camera if none exist
-            db.execute("SELECT COUNT(*) as count FROM cameras")
-            if db.fetchone()['count'] == 0:
-                print("⚠️ No cameras found. Adding default Webcam_001...")
-                db.execute("""
-                    INSERT INTO cameras (camera_id, name, location, rtsp_source, enabled, dedup_window, confidence_threshold)
-                    VALUES ('Webcam_001', 'Local Webcam', 'Local PC', '0', 1, 30, 0.75)
-                """)
-            
+
             if needs_refresh:
                 # Fetch again now that missing defaults are inserted
                 db.execute("SELECT setting_key, setting_value FROM system_settings")
