@@ -145,16 +145,16 @@
                 </div>
             </div>
             <div class="card-body">
-                <div class="row mb-3">
-                    <div class="col-6">
-                        <small class="text-muted">Location</small>
-                        <p class="mb-0 fw-bold">{{ camera.location }}</p>
+                <!-- Location & Status -->
+                <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+                    <div style="flex: 1 1 120px; min-width: 120px;">
+                        <small class="text-muted d-block mb-1">Location</small>
+                        <p class="mb-0 fw-bold text-truncate" title="{{ camera.location }}">{{ camera.location }}</p>
                     </div>
-                    <div class="col-6">
-                        <small class="text-muted">Status</small>
+                    <div style="flex: 1 1 120px; min-width: 120px;">
+                        <small class="text-muted d-block mb-1">Status</small>
                         <p class="mb-0">
-                            <span
-                                class="camera-status-badge badge badge-modern bg-{{ 'success' if camera.enabled else 'secondary' }}-gradient">
+                            <span class="camera-status-badge badge badge-modern bg-{{ 'success' if camera.enabled else 'secondary' }}-gradient d-inline-flex align-items-center">
                                 {{ 'Active' if camera.enabled else 'Inactive' }}
                             </span>
                         </p>
@@ -162,19 +162,19 @@
                 </div>
 
                 <!-- Live Connection Status -->
-                <div class="row mb-3">
-                    <div class="col-6">
-                        <small class="text-muted">Connection</small>
+                <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+                    <div style="flex: 1 1 140px; min-width: 140px;">
+                        <small class="text-muted d-block mb-1">Connection</small>
                         <p class="mb-0">
-                            <span class="camera-connection-badge badge badge-modern bg-info-gradient">
+                            <span class="camera-connection-badge badge badge-modern bg-info-gradient d-inline-flex align-items-center">
                                 <i class="bi bi-wifi me-1"></i>Checking...
                             </span>
                         </p>
                     </div>
-                    <div class="col-6">
-                        <small class="text-muted">Quality</small>
+                    <div style="flex: 1 1 120px; min-width: 120px;">
+                        <small class="text-muted d-block mb-1">Quality</small>
                         <p class="mb-0">
-                            <span class="camera-quality-badge badge badge-modern bg-secondary-gradient">
+                            <span class="camera-quality-badge badge badge-modern bg-secondary-gradient d-inline-flex align-items-center">
                                 <i class="bi bi-speedometer2 me-1"></i>Unknown
                             </span>
                         </p>
@@ -191,11 +191,11 @@
                     <small class="text-muted">ROI</small>
                     <p class="mb-0 roi-status-container">
                         {% if camera.roi or camera.roi_polygon %}
-                        <span class="badge badge-modern bg-success-gradient">
+                        <span class="badge badge-modern bg-success-gradient d-inline-flex align-items-center">
                             <i class="bi bi-check-circle me-1"></i>Set
                         </span>
                         {% else %}
-                        <span class="badge badge-modern bg-secondary-gradient">
+                        <span class="badge badge-modern bg-secondary-gradient d-inline-flex align-items-center">
                             <i class="bi bi-dash-circle me-1"></i>Not Set
                         </span>
                         {% endif %}
@@ -209,14 +209,15 @@
                     </p>
                 </div>
 
-                <div class="row mb-3">
-                    <div class="col-6">
-                        <small class="text-muted">Confidence</small>
-                        <p class="mb-0">{{ camera.confidence_threshold }}</p>
+                <!-- Confidence & Dedup Window -->
+                <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+                    <div style="flex: 1 1 120px; min-width: 120px;">
+                        <small class="text-muted d-block mb-1">Confidence</small>
+                        <p class="mb-0 fw-bold">{{ camera.confidence_threshold }}</p>
                     </div>
-                    <div class="col-6">
-                        <small class="text-muted">Dedup Window</small>
-                        <p class="mb-0">{{ camera.dedup_window }}s</p>
+                    <div style="flex: 1 1 120px; min-width: 120px;">
+                        <small class="text-muted d-block mb-1">Dedup Window</small>
+                        <p class="mb-0 fw-bold">{{ camera.dedup_window }}s</p>
                     </div>
                 </div>
 
@@ -632,8 +633,9 @@
         const connectionBadge = card.querySelector('.camera-connection-badge');
         if (connectionBadge) {
             if (status.connection.connected) {
+                const latency = status.connection.latency_ms ? Math.round(status.connection.latency_ms) : 0;
                 connectionBadge.className = 'camera-connection-badge badge badge-modern bg-success-gradient';
-                connectionBadge.innerHTML = `<i class="bi bi-wifi me-1"></i>Connected (${status.connection.latency_ms}ms)`;
+                connectionBadge.innerHTML = `<i class="bi bi-wifi me-1"></i>Connected (${latency}ms)`;
             } else {
                 connectionBadge.className = 'camera-connection-badge badge badge-modern bg-danger-gradient';
                 connectionBadge.innerHTML = `<i class="bi bi-wifi-off me-1"></i>Disconnected`;

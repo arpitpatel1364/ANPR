@@ -249,34 +249,74 @@ class WebSocketManager:
     
     def _test_camera_connection(self, camera):
         """
-        Lightweight TCP port check replacing ffprobe subprocess.
+        Lightweight TCP port check replacing ffprobe subprocess with ICMP ping fallback.
         Returns status dict.
-        Timeout: 3 seconds max (vs ffprobe's 5s timeout).
+        Timeout: 3 seconds max.
         """
         import socket as _socket
         import time
+        import subprocess
         
         rtsp_url = camera.get('rtsp_source') or camera.get('url', '')
         if not rtsp_url:
             return {
                 'status': 'no_source',
                 'quality': 'unknown',
-                'error': 'No RTSP source configured'
+                'error': 'No RTSP source configured',
+                'response_time': 0
             }
             
         start_time = time.time()
         try:
-            # Parse host from rtsp://host:port/path
-            host_part = rtsp_url.replace('rtsp://', '').split('/')[0]
-            if ':' in host_part:
-                host, port = host_part.rsplit(':', 1)
-                port = int(port)
+            # Strip prefixes
+            s = str(rtsp_url).strip()
+            for prefix in ['rtsp://', 'http://', 'https://']:
+                if s.lower().startswith(prefix):
+                    s = s[len(prefix):]
+                    break
+            # Find credentials if present
+            if '@' in s:
+                s = s.split('@', 1)[1]
+            # Find path if present
+            if '/' in s:
+                s = s.split('/', 1)[0]
+            # Find port if present
+            if ':' in s:
+                parts = s.split(':', 1)
+                host = parts[0]
+                try:
+                    port = int(parts[1])
+                except:
+                    port = 554
             else:
-                host = host_part
-                port = 554  # default RTSP port
-            
-            with _socket.create_connection((host, port), timeout=3):
-                response_time = round((time.time() - start_time) * 1000, 2)
+                host = s
+                port = 554
+
+            # Helper for TCP socket connection
+            def tcp_ping(h, p, timeout=2.0):
+                try:
+                    with _socket.create_connection((h, p), timeout=timeout):
+                        return True
+                except Exception:
+                    return False
+
+            # Helper for ICMP ping
+            def icmp_ping(h, timeout=2.0):
+                try:
+                    res = subprocess.run(
+                        ['ping', '-c', '1', '-W', str(int(timeout)), h],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL
+                    )
+                    return res.returncode == 0
+                except Exception:
+                    return False
+
+            # Check reachability
+            is_reachable = tcp_ping(host, port) or icmp_ping(host)
+            response_time = round((time.time() - start_time) * 1000, 2)
+
+            if is_reachable:
                 if response_time < 500:
                     quality = 'excellent'
                 elif response_time < 1500:
@@ -287,7 +327,15 @@ class WebSocketManager:
                     'status': 'connected',
                     'quality': quality,
                     'response_time': response_time,
-                    'streams_found': 1
+                    'streams_found': 1,
+                    'error': None
+                }
+            else:
+                return {
+                    'status': 'disconnected',
+                    'quality': 'none',
+                    'error': 'Connection failed (host unreachable)',
+                    'response_time': response_time
                 }
         except Exception as e:
             response_time = round((time.time() - start_time) * 1000, 2)
