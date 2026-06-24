@@ -113,7 +113,7 @@ def add_plate():
                 
                 # Broadcast reload signal to ANPR service for live updates
                 broadcast_reload_plates()
-                flash(f'✅ Live plate list updated in ANPR system', 'info')
+                flash(f'plate list updated in ANPR system', 'info')
     except Exception as e:
         flash(f'Error adding plate: {str(e)}', 'error')
     
@@ -136,7 +136,7 @@ def delete_plate():
                 
                 # Broadcast reload signal to ANPR service for live updates
                 broadcast_reload_plates()
-                flash(f'✅ Live plate list updated in ANPR system', 'info')
+                flash(f'plate list updated in ANPR system', 'info')
             else:
                 flash(f'Plate {plate} not found!', 'error')
     except Exception as e:
