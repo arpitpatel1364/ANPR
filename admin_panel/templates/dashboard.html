@@ -166,21 +166,21 @@
         <div class="row mb-4">
             <div class="col-lg-6 mb-4">
                 <div class="card card-modern-enhanced">
-                    <div class="card-header d-flex justify-content-between align-items-center">
+                    <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-3">
                         <h5 class="card-title mb-0">
                             <i class="bi bi-activity me-2"></i>System Status
                         </h5>
-                        <div class="d-flex align-items-center">
-                            <span class="badge badge-modern bg-success-gradient me-2" id="systemStatus">Online</span>
+                        <div class="d-flex align-items-center flex-wrap gap-2">
+                            <span class="badge badge-modern bg-success-gradient" id="systemStatus">Online</span>
                             <div class="live-indicator" id="liveIndicator" style="display: none;">
                                 <i class="bi bi-circle-fill text-success"></i>
                                 <span class="ms-1 small">Live</span>
                             </div>
-                            <div class="ms-3">
-                                <button class="btn btn-sm btn-outline-success me-2" onclick="startANPRService()" id="startServiceBtn">
+                            <div class="d-flex align-items-center gap-2 ms-2">
+                                <button class="btn btn-sm btn-outline-success" onclick="startANPRService()" id="startServiceBtn">
                                     <i class="bi bi-play-circle me-1"></i>Start
                                 </button>
-                                <button class="btn btn-sm btn-outline-danger me-2" onclick="stopANPRService()" id="stopServiceBtn">
+                                <button class="btn btn-sm btn-outline-danger" onclick="stopANPRService()" id="stopServiceBtn">
                                     <i class="bi bi-stop-circle me-1"></i>Stop
                                 </button>
                                 <button class="btn btn-sm btn-outline-primary" onclick="restartANPRService()" id="restartServiceBtn">

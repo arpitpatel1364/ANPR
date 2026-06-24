@@ -898,12 +898,12 @@ function showLiveUpdateIndicator() {
         if (typeof connectionStatus !== 'undefined' && connectionStatus !== 'connected') {
             if (icon) icon.className = 'bi bi-circle-fill text-danger';
             if (textElement) textElement.textContent = 'Offline';
-            indicator.style.display = 'inline-block';
+            indicator.style.display = 'flex';
             indicator.classList.remove('pulse');
         } else {
             if (icon) icon.className = 'bi bi-circle-fill text-success';
             if (textElement) textElement.textContent = 'Live';
-            indicator.style.display = 'inline-block';
+            indicator.style.display = 'flex';
             indicator.classList.add('pulse');
         }
     }

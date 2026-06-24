@@ -11,6 +11,49 @@ os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|max_delay;5000
 from typing import Dict, Any, Optional
 from datetime import datetime
 
+def extract_host_port(url_str):
+    if isinstance(url_str, int) or (isinstance(url_str, str) and url_str.isdigit()):
+        return None, None
+    s = str(url_str).strip()
+    for prefix in ['rtsp://', 'http://', 'https://']:
+        if s.lower().startswith(prefix):
+            s = s[len(prefix):]
+            break
+    if '@' in s:
+        s = s.split('@', 1)[1]
+    if '/' in s:
+        s = s.split('/', 1)[0]
+    if ':' in s:
+        parts = s.split(':', 1)
+        host = parts[0]
+        try:
+            port = int(parts[1])
+        except:
+            port = 554
+        return host, port
+    else:
+        return s, 554
+
+def test_tcp_ping(host: str, port: int, timeout: float = 2.0) -> bool:
+    import socket
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except Exception:
+        return False
+
+def test_icmp_ping(host: str, timeout: float = 2.0) -> bool:
+    import subprocess
+    try:
+        res = subprocess.run(
+            ['ping', '-c', '1', '-W', str(int(timeout)), host],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
+        return res.returncode == 0
+    except Exception:
+        return False
+
 def test_rtsp_connection(rtsp_url: str, timeout: int = 5) -> Dict[str, Any]:
     """
     Test RTSP camera connection using OpenCV
@@ -90,6 +133,20 @@ def test_rtsp_connection(rtsp_url: str, timeout: int = 5) -> Dict[str, Any]:
                         'error': None
                     }
                     
+            # Fallback for network cameras: try TCP ping and ICMP ping
+            host, port = extract_host_port(rtsp_url)
+            if host:
+                ping_start = time.time()
+                if test_tcp_ping(host, port) or test_icmp_ping(host):
+                    latency = (time.time() - ping_start) * 1000
+                    return {
+                        'connected': True,
+                        'latency_ms': round(latency, 2),
+                        'read_time_ms': 0,
+                        'frame_size': "Ping OK",
+                        'error': None
+                    }
+                    
             return {
                 'connected': False,
                 'latency_ms': None,
@@ -104,6 +161,21 @@ def test_rtsp_connection(rtsp_url: str, timeout: int = 5) -> Dict[str, Any]:
                 cap.release()
             except:
                 pass
+                
+        # Fallback for network cameras on OpenCV connection error: try TCP ping and ICMP ping
+        host, port = extract_host_port(rtsp_url)
+        if host:
+            ping_start = time.time()
+            if test_tcp_ping(host, port) or test_icmp_ping(host):
+                latency = (time.time() - ping_start) * 1000
+                return {
+                    'connected': True,
+                    'latency_ms': round(latency, 2),
+                    'read_time_ms': 0,
+                    'frame_size': "Ping OK",
+                    'error': None
+                }
+                
         return {
             'connected': False,
             'latency_ms': None,

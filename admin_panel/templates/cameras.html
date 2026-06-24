@@ -135,26 +135,12 @@
                         <i class="bi bi-three-dots-vertical"></i>
                     </button>
                     <ul class="dropdown-menu dropdown-menu-end">
-                        <li><a class="dropdown-item" href="#" onclick="editCamera(event, '{{ camera.id }}')">
-                                <i class="bi bi-pencil me-2"></i>Edit
-                            </a></li>
-                        <li><a class="dropdown-item d-flex align-items-center" href="#"
-                                onclick="setCameraRoi(event, '{{ camera.id }}')" style="padding: 0.6rem 1rem;">
-                                <i class="bi bi-vector-pen me-2" style="font-size: 1.1rem;"></i>
-                                <span>Set ROI</span>
-                            </a></li>
-                        <li><a class="dropdown-item" href="#" onclick="testCameraLive(event, '{{ camera.id }}')">
-                                <i class="bi bi-wifi me-2"></i>Test Connection (Live)
-                            </a></li>
-                        <li><a class="dropdown-item" href="#" onclick="refreshCamerasLive()">
-                                <i class="bi bi-arrow-clockwise me-2"></i>Refresh Status
-                            </a></li>
-                        <li>
-                            <hr class="dropdown-divider">
-                        </li>
-                        <li><a class="dropdown-item text-danger" href="#" onclick="deleteCamera('{{ camera.id }}')">
-                                <i class="bi bi-trash me-2"></i>Delete
-                            </a></li>
+                        <li><a class="dropdown-item" href="#" onclick="editCamera(event, '{{ camera.id }}')"><i class="bi bi-pencil me-2"></i>Edit</a></li>
+                        <li><a class="dropdown-item" href="#" onclick="setCameraRoi(event, '{{ camera.id }}')"><i class="bi bi-vector-pen me-2"></i>Set ROI</a></li>
+                        <li><a class="dropdown-item" href="#" onclick="testCameraLive(event, '{{ camera.id }}')"><i class="bi bi-wifi me-2"></i>Test Connection (Live)</a></li>
+                        <li><a class="dropdown-item" href="#" onclick="refreshCamerasLive()"><i class="bi bi-arrow-clockwise me-2"></i>Refresh Status</a></li>
+                        <li><hr class="dropdown-divider"></li>
+                        <li><a class="dropdown-item text-danger" href="#" onclick="deleteCamera('{{ camera.id }}')"><i class="bi bi-trash me-2"></i>Delete</a></li>
                     </ul>
                 </div>
             </div>
@@ -180,7 +166,7 @@
                     <div class="col-6">
                         <small class="text-muted">Connection</small>
                         <p class="mb-0">
-                            <span class="badge badge-modern bg-info-gradient">
+                            <span class="camera-connection-badge badge badge-modern bg-info-gradient">
                                 <i class="bi bi-wifi me-1"></i>Checking...
                             </span>
                         </p>
@@ -188,7 +174,7 @@
                     <div class="col-6">
                         <small class="text-muted">Quality</small>
                         <p class="mb-0">
-                            <span class="badge badge-modern bg-secondary-gradient">
+                            <span class="camera-quality-badge badge badge-modern bg-secondary-gradient">
                                 <i class="bi bi-speedometer2 me-1"></i>Unknown
                             </span>
                         </p>
@@ -643,21 +629,21 @@
         }
 
         // Update connection status
-        const connectionBadge = card.querySelector('.row.mb-3 .col-6:first-child .badge');
+        const connectionBadge = card.querySelector('.camera-connection-badge');
         if (connectionBadge) {
             if (status.connection.connected) {
-                connectionBadge.className = 'badge badge-modern bg-success-gradient';
+                connectionBadge.className = 'camera-connection-badge badge badge-modern bg-success-gradient';
                 connectionBadge.innerHTML = `<i class="bi bi-wifi me-1"></i>Connected (${status.connection.latency_ms}ms)`;
             } else {
-                connectionBadge.className = 'badge badge-modern bg-danger-gradient';
+                connectionBadge.className = 'camera-connection-badge badge badge-modern bg-danger-gradient';
                 connectionBadge.innerHTML = `<i class="bi bi-wifi-off me-1"></i>Disconnected`;
             }
         }
 
         // Update quality badge
-        const qualityBadge = card.querySelector('.row.mb-3 .col-6:last-child .badge');
+        const qualityBadge = card.querySelector('.camera-quality-badge');
         if (qualityBadge) {
-            qualityBadge.className = `badge badge-modern bg-${status.quality_badge}-gradient`;
+            qualityBadge.className = `camera-quality-badge badge badge-modern bg-${status.quality_badge}-gradient`;
             qualityBadge.innerHTML = `<i class="bi bi-speedometer2 me-1"></i>${status.quality}`;
         }
 
@@ -771,9 +757,9 @@
         // Update status to "Checking..."
         const card = document.querySelector(`[data-camera-id="${cameraId}"]`);
         if (card) {
-            const connectionBadge = card.querySelector('.row.mb-3 .col-6:first-child .badge');
+            const connectionBadge = card.querySelector('.camera-connection-badge');
             if (connectionBadge) {
-                connectionBadge.className = 'badge badge-modern bg-info-gradient';
+                connectionBadge.className = 'camera-connection-badge badge badge-modern bg-info-gradient';
                 connectionBadge.innerHTML = '<i class="bi bi-wifi me-1"></i>Checking...';
             }
         }
