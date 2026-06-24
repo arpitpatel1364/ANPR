@@ -277,7 +277,11 @@ def update_camera_in_db(camera_id, camera_data):
             
             if 'roi_polygon' in camera_data:
                 update_fields.append("roi_polygon = %s")
-                values.append(json.dumps(camera_data['roi_polygon']))
+                values.append(json.dumps(camera_data['roi_polygon']) if camera_data['roi_polygon'] else None)
+            
+            if 'roi' in camera_data:
+                update_fields.append("roi = %s")
+                values.append(json.dumps(camera_data['roi']) if camera_data['roi'] else None)
             
             # Append camera_id for WHERE clause
             values.append(camera_id)

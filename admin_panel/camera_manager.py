@@ -100,14 +100,16 @@ def add_camera():
             roi_type = roi_data_json.get('roi_type')
             coordinates = roi_data_json.get('coordinates', [])
             
-            if roi_type == 'rectangle' and len(coordinates) == 4:
+            if roi_type in ['box', 'rectangle'] and len(coordinates) >= 2:
+                x_coords = [int(pt[0]) for pt in coordinates]
+                y_coords = [int(pt[1]) for pt in coordinates]
                 camera_data['roi'] = {
-                    'x1': int(coordinates[0]),
-                    'y1': int(coordinates[1]),
-                    'x2': int(coordinates[2]),
-                    'y2': int(coordinates[3])
+                    'x1': min(x_coords),
+                    'y1': min(y_coords),
+                    'x2': max(x_coords),
+                    'y2': max(y_coords)
                 }
-                camera_data['roi_polygon'] = []
+                camera_data['roi_polygon'] = None
             elif roi_type == 'polygon' and len(coordinates) >= 3:
                 camera_data['roi_polygon'] = [{'x': int(pt[0]), 'y': int(pt[1])} for pt in coordinates]
                 camera_data['roi'] = None
@@ -383,8 +385,21 @@ def save_camera_roi(camera_id):
                 update_data['roi'] = None
             else:
                 return jsonify({'success': False, 'message': 'Polygon must have at least 3 points'}), 400
+        elif roi_type in ['box', 'rectangle']:
+            if len(coordinates) >= 2:
+                x_coords = [int(pt[0]) for pt in coordinates]
+                y_coords = [int(pt[1]) for pt in coordinates]
+                update_data['roi'] = {
+                    'x1': min(x_coords),
+                    'y1': min(y_coords),
+                    'x2': max(x_coords),
+                    'y2': max(y_coords)
+                }
+                update_data['roi_polygon'] = None
+            else:
+                return jsonify({'success': False, 'message': 'Box must have 2 points'}), 400
         else:
-            return jsonify({'success': False, 'message': 'Invalid ROI type. Only polygon is supported.'}), 400
+            return jsonify({'success': False, 'message': 'Invalid ROI type.'}), 400
 
         if update_camera_in_db(camera_id, update_data):
             return jsonify({
