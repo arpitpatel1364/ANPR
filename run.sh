@@ -100,10 +100,10 @@ ensure_mysql_running() {
     # Fallback to installing XAMPP if no service is found and /opt/lampp is missing
     if [ ! -d "/opt/lampp" ] && [ $started -eq 0 ]; then
         echo "No database service found. Downloading and installing XAMPP..."
-        wget https://sourceforge.net/projects/xampp/files/XAMPP%20Linux/8.2.12/xampp-linux-x64-8.2.12-0-installer.run -O /tmp/xampp-installer.run
-        chmod +x /tmp/xampp-installer.run
-        $SUDO /tmp/xampp-installer.run --mode unattended
-        rm -f /tmp/xampp-installer.run
+        wget https://sourceforge.net/projects/xampp/files/XAMPP%20Linux/8.2.12/xampp-linux-x64-8.2.12-0-installer.run -O "$SCRIPT_DIR/xampp-installer.run"
+        chmod +x "$SCRIPT_DIR/xampp-installer.run"
+        $SUDO "$SCRIPT_DIR/xampp-installer.run" --mode unattended
+        rm -f "$SCRIPT_DIR/xampp-installer.run"
         $SUDO /opt/lampp/lampp start
         echo "XAMPP installed and started."
     fi

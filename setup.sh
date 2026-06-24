@@ -223,10 +223,10 @@ function check_xampp() {
     if [[ $started -eq 0 ]]; then
         warn "Could not identify local database service (XAMPP, MySQL, or MariaDB)."
         info "Downloading and installing XAMPP..."
-        wget https://sourceforge.net/projects/xampp/files/XAMPP%20Linux/8.2.12/xampp-linux-x64-8.2.12-0-installer.run -O /tmp/xampp-installer.run
-        chmod +x /tmp/xampp-installer.run
-        $SUDO /tmp/xampp-installer.run --mode unattended
-        rm -f /tmp/xampp-installer.run
+        wget https://sourceforge.net/projects/xampp/files/XAMPP%20Linux/8.2.12/xampp-linux-x64-8.2.12-0-installer.run -O "$SCRIPT_DIR/xampp-installer.run"
+        chmod +x "$SCRIPT_DIR/xampp-installer.run"
+        $SUDO "$SCRIPT_DIR/xampp-installer.run" --mode unattended
+        rm -f "$SCRIPT_DIR/xampp-installer.run"
         info "XAMPP installation completed."
         
         if [[ -x /opt/lampp/lampp ]]; then
