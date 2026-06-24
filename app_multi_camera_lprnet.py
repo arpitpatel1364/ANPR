@@ -2512,12 +2512,13 @@ def main():
 
     # Load configuration
     config = load_config()
+    print(f"DEBUG: LOADED CONFIG IS: {config}")
     if not config:
         print("❌ No configuration found. Exiting.")
         return
 
     if config.get('system_mode') != 'multi_camera':
-        print("❌ Configuration is not set for multi-camera mode. Please update Database settings")
+        print(f"❌ Configuration is not set for multi-camera mode. system_mode = {repr(config.get('system_mode'))}")
         return
 
     # Check for headless mode (use global HEADLESS_MODE which auto-detected display)
