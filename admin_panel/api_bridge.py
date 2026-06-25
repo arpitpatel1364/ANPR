@@ -21,6 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from db_connection import DatabaseConnection
 import hashlib
 from plate_logger import PlateLogger
+from auth import admin_required
 
 api_bridge_bp = Blueprint('api_bridge', __name__)
 
@@ -373,6 +374,7 @@ def get_camera_stats():
         }), 500
 
 @api_bridge_bp.route('/api/service/control', methods=['POST'])
+@admin_required
 def control_service():
     """Control ANPR service (start/stop/restart)"""
     try:
@@ -430,6 +432,7 @@ def control_service():
         }), 500
 
 @api_bridge_bp.route('/api/plates/reload', methods=['POST'])
+@admin_required
 def reload_plates():
     """
     Reload allowed plates from database.
