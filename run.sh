@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-
+export PYTHONPATH="${PYTHONPATH:-}"
 # 🔥 ANPR Service Runner & Manager (Production Ready)
 
 set -Eeuo pipefail
@@ -49,12 +49,12 @@ EOF
 ########################################
 
 is_mysql_ready() {
-    timeout 1 bash -c "cat < /dev/null > /dev/tcp/${DB_HOST:-127.0.0.1}/${DB_PORT:-3306}" &>/dev/null
+    systemctl is-active --quiet mysql
 }
 
 wait_for_mysql() {
     local timeout_secs=${1:-60}
-    log "Waiting for MySQL..."
+    log "Waiting for MySQL service to be active..."
 
     for ((i=0; i<timeout_secs; i+=2)); do
         if is_mysql_ready; then
@@ -100,7 +100,9 @@ run_backend() {
     [[ -f "app_multi_camera_lprnet.py" ]] || die "Backend file missing"
 
     export PYTHONPATH="$ROOT_DIR:$PYTHONPATH"
-    export CUDA_VISIBLE_DEVICES=0
+    
+    # Force execution on CPU by hiding all CUDA devices
+    export CUDA_VISIBLE_DEVICES="-1"
 
     log "Starting backend service..."
 

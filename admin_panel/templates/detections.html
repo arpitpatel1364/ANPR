@@ -165,8 +165,8 @@
                         <div class="filter-group">
                             <label class="filter-label">Status</label>
                             <select class="filter-select" id="status" name="status" onchange="applyFilters()">
-                                <option value="all" {{ 'selected' if status_filter == 'all' }}>All Status</option>
-                                <option value="VERIFIED" {{ 'selected' if status_filter == 'VERIFIED' or not status_filter }}>Verified</option>
+                                <option value="all" {{ 'selected' if status_filter == 'all' or not status_filter }}>All Status</option>
+                                <option value="VERIFIED" {{ 'selected' if status_filter == 'VERIFIED' }}>Verified</option>
                                 <option value="NOT_VERIFIED" {{ 'selected' if status_filter == 'NOT_VERIFIED' }}>Not Verified</option>
                             </select>
                         </div>
@@ -261,7 +261,7 @@
                                         <img src="{{ ann }}?t={{ detection['timestamp'].timestamp()|int if detection['timestamp'] else 0 }}" loading="lazy" style="position:absolute;visibility:hidden;">
                                     </div>
                                     {% elif ann %}
-                                    <img src="{{ ann }}?t={{ detection['timestamp'].timestamp()|int if detection['timestamp'] else 0 }}" alt="Annotated" loading="lazy" width="60" height="35" style="width:60px;height:35px;object-fit:cover;border-radius:4px;cursor:pointer;transform:translateZ(0);will-change:transform;" onclick="previewImage('{{ ann }}?t={{ detection['timestamp'].timestamp()|int if detection['timestamp'] else 0 }}')">
+                                    <img src="{{ ann }}?t={{ detection['timestamp'].timestamp()|int if detection['timestamp'] else 0 }}" alt="" onerror="this.outerHTML='<i class=\\'bi bi-image text-muted\\'></i>'" loading="lazy" width="60" height="35" style="width:60px;height:35px;object-fit:cover;border-radius:4px;cursor:pointer;transform:translateZ(0);will-change:transform;" onclick="previewImage('{{ ann }}?t={{ detection['timestamp'].timestamp()|int if detection['timestamp'] else 0 }}')">
                                     {% else %}
                                     <i class="bi bi-image text-muted"></i>
                                     {% endif %}
@@ -544,7 +544,7 @@ function renderDetectionsTable(data, isLoadMore = false) {
         if (ann && x1 != null && y1 != null) {
             imgHtml = `<div class="dynamic-crop-container" data-src="${ann}" data-x1="${x1}" data-y1="${y1}" data-x2="${x2}" data-y2="${y2}" style="width:60px;height:35px;border-radius:4px;overflow:hidden;position:relative;background:#f0f0f0;cursor:pointer;transform:translateZ(0);will-change:transform;" onclick="previewImage('${ann}')" title="Click to view full image"><img src="${ann}" loading="lazy" style="position:absolute;visibility:hidden;"></div>`;
         } else if (ann) {
-            imgHtml = `<img src="${ann}" alt="Annotated" loading="lazy" width="60" height="35" style="width:60px;height:35px;object-fit:cover;border-radius:4px;cursor:pointer;transform:translateZ(0);will-change:transform;" onclick="previewImage('${ann}')">`;
+            imgHtml = `<img src="${ann}" alt="" onerror="this.outerHTML='<i class=\\'bi bi-image text-muted\\'></i>'" loading="lazy" width="60" height="35" style="width:60px;height:35px;object-fit:cover;border-radius:4px;cursor:pointer;transform:translateZ(0);will-change:transform;" onclick="previewImage('${ann}')">`;
         }
 
         const detectionJson = JSON.stringify(d).replace(/'/g, '&#39;');
