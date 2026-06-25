@@ -1449,8 +1449,9 @@ class CameraProcessor:
                             if not self.headless_mode:
                                 print(f"⏳ [{self.name}] Verified plate {license_plate_text} on 1s cooldown, skipping log")
 
+                        is_logged = False
                         if should_log:
-                            plate_logger.log_detection(
+                            is_logged = plate_logger.log_detection(
                                 plate=license_plate_text,
                                 detection_confidence=confidence,
                                 processing_time_ms=processing_time,
@@ -1462,29 +1463,30 @@ class CameraProcessor:
                                 bbox_y2=image_urls.get('bbox_y2') if image_urls else None
                             )
 
-                            if verification_status == "VERIFIED":
+                            if verification_status == "VERIFIED" and is_logged:
                                 self.update_verified_plate_cooldown(license_plate_text)
 
-                        if verification_status == "VERIFIED":
-                            self.save_verified_plate_image(processed_frame, license_plate_text)
+                        if is_logged:
+                            if verification_status == "VERIFIED":
+                                self.save_verified_plate_image(processed_frame, license_plate_text)
 
-                        self.send_detection_to_admin_panel(
-                            plate=license_plate_text,
-                            confidence=confidence,
-                            processing_time=processing_time,
-                            verification_status=verification_status,
-                            image_urls=image_urls
-                        )
+                            self.send_detection_to_admin_panel(
+                                plate=license_plate_text,
+                                confidence=confidence,
+                                processing_time=processing_time,
+                                verification_status=verification_status,
+                                image_urls=image_urls
+                            )
 
-                        if verification_status == "VERIFIED" and self.api_enabled:
-                            self.trigger_api_call(license_plate_text, verification_status)
-                        else:
-                            if not self.api_enabled:
-                                if not self.headless_mode:
-                                    print(f"🚫 [{self.name}] API disabled for this camera - plate: {license_plate_text}")
+                            if verification_status == "VERIFIED" and self.api_enabled:
+                                self.trigger_api_call(license_plate_text, verification_status)
                             else:
-                                if not self.headless_mode:
-                                    print(f"🚫 [{self.name}] API call skipped for plate: {license_plate_text} (Status: {verification_status}) - Not verified")
+                                if not self.api_enabled:
+                                    if not self.headless_mode:
+                                        print(f"🚫 [{self.name}] API disabled for this camera - plate: {license_plate_text}")
+                                else:
+                                    if not self.headless_mode:
+                                        print(f"🚫 [{self.name}] API call skipped for plate: {license_plate_text} (Status: {verification_status}) - Not verified")
                                     
             self.current_processed_frame = processed_frame
             if detected_texts:
