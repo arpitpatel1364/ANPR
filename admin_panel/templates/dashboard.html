@@ -328,7 +328,7 @@
                                         <img src="{{ ann }}" style="position:absolute;visibility:hidden;">
                                     </div>
                                     {% elif ann %}
-                                    <img src="{{ ann }}" alt="Annotated" loading="lazy" style="width:70px;height:40px;object-fit:cover;border-radius:6px;cursor:pointer;" onclick="showImagePreview('{{ ann }}', 'Annotated Frame')">
+                                    <img src="{{ ann }}" alt="" onerror="this.outerHTML='<i class=\\'bi bi-image text-muted\\'></i>'" loading="lazy" style="width:70px;height:40px;object-fit:cover;border-radius:6px;cursor:pointer;" onclick="showImagePreview('{{ ann }}', 'Annotated Frame')">
                                     {% else %}
                                     <i class="bi bi-image text-muted"></i>
                                     {% endif %}

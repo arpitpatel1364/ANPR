@@ -49,6 +49,7 @@ let reconnectTimeout = null;
 let connectionStatus = 'disconnected'; // 'connected', 'connecting', 'disconnected', 'error'
 let lastConnectionTime = null;
 let connectionHealthCheck = null;
+let isPageUnloading = false;
 
 // Initialize WebSocket connection
 function initializeWebSocket() {
@@ -110,12 +111,12 @@ function initializeWebSocket() {
             stopConnectionHealthCheck();
             
             // Only show disconnect notification if it was an unexpected disconnect
-            if (reason !== 'io client disconnect' && reconnectAttempts === 0) {
+            if (!isPageUnloading && reason !== 'io client disconnect' && reconnectAttempts === 0) {
                 showNotification('Connection lost. Attempting to reconnect...', 'warning');
             }
             
             // Attempt reconnection unless it was a manual disconnect
-            if (reason !== 'io client disconnect') {
+            if (!isPageUnloading && reason !== 'io client disconnect') {
                 attemptReconnect();
             }
         });
@@ -1060,7 +1061,7 @@ function refreshRecentDetectionsTable(detections) {
         
         let imgHtml = '<i class="bi bi-image text-muted"></i>';
         if (imgUrl) {
-            imgHtml = `<img src="${imgUrl}" alt="Plate" loading="lazy" style="width:70px;height:40px;object-fit:cover;border-radius:6px;cursor:pointer;">`;
+            imgHtml = `<img src="${imgUrl}" alt="" loading="lazy" onerror="this.outerHTML='<i class=\\'bi bi-image text-muted\\'></i>'" style="width:70px;height:40px;object-fit:cover;border-radius:6px;cursor:pointer;">`;
         }
         
         tr.innerHTML = `
@@ -2185,5 +2186,9 @@ function getTitleForType(type) {
 
 // Cleanup on page unload
 window.addEventListener('beforeunload', function() {
+    isPageUnloading = true;
+    if (socket) {
+        socket.disconnect();
+    }
     stopRealTimeUpdates();
 });

@@ -21,7 +21,7 @@
                         <i class="bi bi-plus-circle me-2"></i>Add Camera
                     </button>
                     <button class="btn btn-outline-warning btn-modern btn-modern-enhanced ms-2"
-                        onclick="restartService()">
+                        onclick="restartService(event)">
                         <i class="bi bi-arrow-clockwise me-2"></i>Restart Service
                     </button>
                 </div>
@@ -1916,13 +1916,16 @@
     }
 
     // Restart service
-    function restartService() {
+    function restartService(event) {
         if (confirm('This will restart the ANPR service. Continue?')) {
-            const button = event.target;
-            const originalText = button.innerHTML;
+            const evt = event || window.event;
+            const button = evt ? (evt.currentTarget || evt.target.closest('button')) : null;
+            const originalText = button ? button.innerHTML : '';
 
-            button.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>Restarting...';
-            button.disabled = true;
+            if (button) {
+                button.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>Restarting...';
+                button.disabled = true;
+            }
 
             fetch('/api/service/control', {
                 method: 'POST',
@@ -1945,10 +1948,11 @@
                             alert('Service restarted successfully!');
                         }
                     } else {
+                        const errorMsg = data.error || data.message || 'Error restarting service';
                         if (typeof showError === 'function') {
-                            showError(data.message || 'Error restarting service');
+                            showError(errorMsg);
                         } else {
-                            alert(data.message || 'Error restarting service');
+                            alert(errorMsg);
                         }
                     }
                 })
@@ -1961,8 +1965,10 @@
                     }
                 })
                 .finally(() => {
-                    button.innerHTML = originalText;
-                    button.disabled = false;
+                    if (button) {
+                        button.innerHTML = originalText;
+                        button.disabled = false;
+                    }
                 });
         }
     }

@@ -73,7 +73,7 @@ def detections():
         last_id = None
 
     search = request.args.get('search', '').strip()
-    status_filter = request.args.get('status', 'VERIFIED').strip()  # For dropdown display
+    status_filter = request.args.get('status', 'all').strip()  # For dropdown display
     query_status = status_filter  # For database query
     # If user selects 'all', use empty string for query (show all)
     if query_status == 'all':
@@ -212,7 +212,7 @@ def detections_data_api():
         last_id = None
 
     search = request.args.get('search', '').strip()
-    status_filter = request.args.get('status', 'VERIFIED').strip()
+    status_filter = request.args.get('status', 'all').strip()
     query_status = '' if status_filter == 'all' else status_filter
     camera_filter = request.args.get('camera', '').strip()
     date_from = request.args.get('date_from', '').strip()
@@ -309,7 +309,7 @@ def export_detections():
     """Export detections to CSV"""
     # Apply same filters as in detections page
     search = request.args.get('search', '').strip()
-    status_filter = request.args.get('status', 'VERIFIED').strip()  # For dropdown display
+    status_filter = request.args.get('status', 'all').strip()  # For dropdown display
     query_status = status_filter  # For database query
     # If user selects 'all', use empty string for query (show all)
     if query_status == 'all':
@@ -406,7 +406,7 @@ def export_detections_pdf():
     """Export detections to PDF with images"""
     # Apply same filters as in detections page
     search = request.args.get('search', '').strip()
-    status_filter = request.args.get('status', 'VERIFIED').strip()  # For dropdown display
+    status_filter = request.args.get('status', 'all').strip()  # For dropdown display
     query_status = status_filter  # For database query
     # If user selects 'all', use empty string for query (show all)
     if query_status == 'all':
