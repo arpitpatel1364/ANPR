@@ -175,11 +175,16 @@ def is_session_valid():
     if 'logged_in' not in session or not session.get('logged_in'):
         return False
     
-    # Check session timeout
-    if 'login_time' in session:
-        if time.time() - session['login_time'] > SESSION_TIMEOUT:
-            return False
+    # Check session timeout based on last activity (sliding window)
+    current_time = time.time()
+    last_activity = session.get('last_activity') or session.get('login_time')
     
+    if last_activity:
+        if current_time - last_activity > SESSION_TIMEOUT:
+            return False
+            
+    # Update last activity time
+    session['last_activity'] = current_time
     return True
 
 def require_auth(f):
@@ -189,6 +194,8 @@ def require_auth(f):
     def decorated_function(*args, **kwargs):
         if not is_session_valid():
             session.clear()
+            if request.is_json or request.path.startswith('/api/') or request.path.startswith('/cameras/'):
+                return jsonify({'success': False, 'message': 'Authentication required. Please login.'}), 401
             flash('Session expired. Please login again.', 'warning')
             return redirect(url_for('auth.login'))
         return f(*args, **kwargs)
@@ -199,9 +206,15 @@ def admin_required(f):
     from functools import wraps
     @wraps(f)
     def decorated_function(*args, **kwargs):
+        if not is_session_valid():
+            session.clear()
+            if request.is_json or request.path.startswith('/api/') or request.path.startswith('/cameras/'):
+                return jsonify({'success': False, 'message': 'Authentication required. Please login.'}), 401
+            flash('Session expired. Please login again.', 'warning')
+            return redirect(url_for('auth.login'))
         role = session.get('user_role', 'viewer')
         if role not in ['admin', 'superadmin']:
-            if request.is_json or request.path.startswith('/api/'):
+            if request.is_json or request.path.startswith('/api/') or request.path.startswith('/cameras/'):
                 return jsonify({'success': False, 'message': 'Access denied: Admin privileges required'}), 403
             flash('Access denied. Administrator privileges required.', 'error')
             return redirect(request.referrer or url_for('dashboard'))

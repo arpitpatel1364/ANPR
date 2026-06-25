@@ -708,6 +708,13 @@ def register_websocket_events(socketio: SocketIO):
     def handle_camera_test(data):
         """Handle camera connection test"""
         try:
+            from flask import session
+            if not session.get('logged_in'):
+                emit('camera_test_result', {
+                    'success': False,
+                    'error': 'Authentication required'
+                })
+                return
             camera_id = data.get('camera_id')
             
             if not camera_id:
@@ -766,6 +773,13 @@ def register_websocket_events(socketio: SocketIO):
     def handle_refresh_cameras():
         """Handle camera status refresh request"""
         try:
+            from flask import session
+            if not session.get('logged_in'):
+                emit('cameras_refreshed', {
+                    'success': False,
+                    'error': 'Authentication required'
+                })
+                return
             # Send updated camera status
             ws_manager._send_camera_status()
             

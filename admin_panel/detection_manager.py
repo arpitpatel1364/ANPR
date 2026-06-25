@@ -10,7 +10,7 @@ import tempfile
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from db_connection import DatabaseConnection
 from pdf_export import create_pdf_export
-from auth import admin_required
+from auth import admin_required, require_auth
 
 detection_bp = Blueprint('detection', __name__)
 
@@ -194,6 +194,7 @@ def detections():
                          next_last_id=next_last_id)
 
 @detection_bp.route('/api/detections/data')
+@require_auth
 def detections_data_api():
     """JSON API endpoint for applyFilters() — returns detection data as JSON."""
     # 1. INPUT HARDENING: Safely parse and clamp parameters
