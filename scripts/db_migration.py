@@ -16,17 +16,17 @@ def migrate_db():
     except Exception as e:
         print(f"Notice: {e}")
 
-    # 2. Add SAdmin user
+    # 2. Add superadmin user
     try:
         with DatabaseConnection() as db:
-            print("Adding SAdmin user...")
-            pw_hash = generate_password_hash("Admin@123")
+            print("Adding superadmin user...")
+            pw_hash = generate_password_hash("superadmin@123")
             db.execute(
                 "INSERT INTO users (username, password_hash, role, is_active) VALUES (%s, %s, %s, 1) ON DUPLICATE KEY UPDATE password_hash = VALUES(password_hash), role = VALUES(role)",
-                ('SAdmin', pw_hash, 'superadmin')
+                ('superadmin', pw_hash, 'superadmin')
             )
     except Exception as e:
-        print(f"Error adding SAdmin: {e}")
+        print(f"Error adding superadmin: {e}")
 
     # 3. Alter cameras table
     try:

@@ -90,16 +90,16 @@ def load_config_from_db():
                     "save_dir": "./detected_plates"
                 },
                 'display_settings': {
-                    "headless_mode": False,
+                    "headless_mode": True,
                     "show_fps": True,
                     "show_plate_count": True,
                     "show_verification_stats": True,
-                    "window_title": "Multi-Camera ANPR System",
+                    "window_title": "Cactus ANPR System",
                     "grid_layout": "2x2",
                     "show_camera_names": True
                 },
                 'headless_settings': {
-                    "enabled": False,
+                    "enabled": True,
                     "log_level": "INFO",
                     "save_frames": False,
                     "frame_save_interval": 30,

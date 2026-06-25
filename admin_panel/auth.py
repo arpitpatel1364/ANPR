@@ -15,21 +15,21 @@ auth_bp = Blueprint('auth', __name__)
 # Fallback users (if database is not available)
 FALLBACK_USERS = {
     'superadmin': {
-        'password': generate_password_hash('superadmin123'),
+        'password': generate_password_hash('superadmin@123'),
         'role': 'superadmin',
         'last_login': None,
         'failed_attempts': 0,
         'locked_until': None
     },
     'admin': {
-        'password': generate_password_hash('admin123'),
+        'password': generate_password_hash('admin@123'),
         'role': 'admin',
         'last_login': None,
         'failed_attempts': 0,
         'locked_until': None
     },
-    'anpr': {
-        'password': generate_password_hash('anpr2024'),
+    'viewer': {
+        'password': generate_password_hash('viewer@123'),
         'role': 'viewer',
         'last_login': None,
         'failed_attempts': 0,

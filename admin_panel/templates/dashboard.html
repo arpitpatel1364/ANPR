@@ -6,24 +6,6 @@
 {% block page_subtitle %}Real-time monitoring and analytics for your license plate recognition system{% endblock %}
 
 {% block content %}
-<!-- Action Bar -->
-<div class="row mb-4">
-    <div class="col-12">
-        <div class="action-bar">
-            <div class="d-flex justify-content-start align-items-center">
-                <div class="action-content">
-                    <button class="btn btn-primary btn-modern btn-modern-enhanced" onclick="refreshStats(true)">
-                        <i class="bi bi-arrow-clockwise me-2"></i>Refresh Data
-                    </button>
-                    <a href="{{ url_for('detection.export_detections') }}" class="btn btn-outline-primary btn-modern btn-modern-enhanced ms-2">
-                        <i class="bi bi-download me-2"></i>Export Data
-                    </a>
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
-
 <!-- Statistics Cards -->
 <div class="row mb-5">
     <div class="col-xl-3 col-md-6 mb-4">
@@ -179,16 +161,21 @@
                                 </div>
                             </div>
                         </div>
-                        <div class="d-flex align-items-center gap-2 ms-auto">
-                            <button class="btn btn-sm btn-outline-success" onclick="startANPRService()" id="startServiceBtn">
-                                <i class="bi bi-play-circle me-1"></i>Start
-                            </button>
-                            <button class="btn btn-sm btn-outline-danger" onclick="stopANPRService()" id="stopServiceBtn">
-                                <i class="bi bi-stop-circle me-1"></i>Stop
-                            </button>
-                            <button class="btn btn-sm btn-outline-primary" onclick="restartANPRService()" id="restartServiceBtn">
-                                <i class="bi bi-arrow-clockwise me-1"></i>Restart
-                            </button>
+                        <div class="control-btn-group ms-auto">
+                          <!-- Play -->
+                          <button class="ctrl-btn ctrl-btn--play" onclick="startANPRService()" id="startServiceBtn" title="Start" aria-label="Start service">
+                            <i class="ti ti-player-play"></i>
+                          </button>
+
+                          <!-- Stop -->
+                          <button class="ctrl-btn ctrl-btn--stop" onclick="stopANPRService()" id="stopServiceBtn" title="Stop" aria-label="Stop service">
+                            <i class="ti ti-player-stop"></i>
+                          </button>
+
+                          <!-- Refresh -->
+                          <button class="ctrl-btn ctrl-btn--refresh" onclick="restartANPRService()" id="restartServiceBtn" title="Restart" aria-label="Refresh service">
+                            <i class="ti ti-refresh"></i>
+                          </button>
                         </div>
                     </div>
                     <div class="card-body">

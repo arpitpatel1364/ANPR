@@ -32,3 +32,8 @@ source "$ROOT_DIR/anpr_env/bin/activate"
 if [[ -f "$ROOT_DIR/scripts/init_database.py" ]]; then
     python "$ROOT_DIR/scripts/init_database.py"
 fi
+
+if [[ -f "$ROOT_DIR/scripts/create_admin_user.py" ]]; then
+    info "Injecting default users..."
+    python "$ROOT_DIR/scripts/create_admin_user.py"
+fi

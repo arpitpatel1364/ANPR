@@ -69,15 +69,7 @@ def plates():
     data = load_allowed_plates()
     plates = data.get('allowed_plates', [])
     
-    # Remove duplicates while preserving order
-    unique_plates = []
-    seen = set()
-    for plate in plates:
-        if plate not in seen:
-            unique_plates.append(plate)
-            seen.add(plate)
-    
-    return render_template('plates.html', plates=unique_plates, total_count=len(unique_plates))
+    return render_template('plates.html', plates=plates, total_count=len(plates))
 
 @plate_bp.route('/plates/add', methods=['POST'])
 def add_plate():
@@ -283,31 +275,6 @@ def bulk_add_plates():
     
     return redirect(url_for('plate.plates'))
 
-@plate_bp.route('/plates/remove_duplicates', methods=['POST'])
-def remove_duplicates():
-    """Remove duplicate plates from the database"""
-    try:
-        with DatabaseConnection() as db:
-            # Delete duplicate rows keeping the one with the smallest ID
-            query = """
-                DELETE p1 FROM allowed_plates p1
-                INNER JOIN allowed_plates p2 
-                ON p1.license_plate = p2.license_plate 
-                WHERE p1.id > p2.id
-            """
-            db.execute(query)
-            removed_count = db.cursor.rowcount
-            
-            if removed_count > 0:
-                flash(f'Successfully removed {removed_count} duplicate plate(s)!', 'success')
-                # Broadcast reload signal to ANPR service for live updates
-                broadcast_reload_plates()
-            else:
-                flash('No duplicate plates found in the database.', 'info')
-    except Exception as e:
-        flash(f'Error removing duplicates: {str(e)}', 'error')
-        
-    return redirect(url_for('plate.plates'))
 
 @plate_bp.route('/plates/search')
 def search_plates():

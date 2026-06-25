@@ -3476,3 +3476,90 @@ body {
     
     /* hover-lift and hover-scale overrides removed — opacity-only hover used globally */
 }
+
+/* Button Group Container */
+.control-btn-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+}
+
+/* Base Button */
+.ctrl-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--border-radius-sm);
+  border: 1px solid transparent;
+  background: transparent;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  outline: none;
+}
+
+/* Play Button */
+.ctrl-btn--play {
+  color: var(--success);
+}
+
+.ctrl-btn--play:hover {
+  background: rgba(114, 169, 84, 0.1);
+  border-color: rgba(114, 169, 84, 0.2);
+  transform: translateY(-1px);
+}
+
+.ctrl-btn--play:active {
+  transform: translateY(0);
+}
+
+/* Stop Button */
+.ctrl-btn--stop {
+  color: var(--danger);
+}
+
+.ctrl-btn--stop:hover {
+  background: rgba(220, 53, 69, 0.1);
+  border-color: rgba(220, 53, 69, 0.2);
+  transform: translateY(-1px);
+}
+
+.ctrl-btn--stop:active {
+  transform: translateY(0);
+}
+
+/* Refresh Button */
+.ctrl-btn--refresh {
+  color: var(--primary);
+}
+
+.ctrl-btn--refresh:hover {
+  background: rgba(114, 169, 84, 0.1);
+  border-color: rgba(114, 169, 84, 0.2);
+  transform: translateY(-1px);
+}
+
+.ctrl-btn--refresh:active {
+  transform: translateY(0);
+}
+
+/* Spin on refresh hover */
+.ctrl-btn--refresh:hover i {
+  animation: btnSpin 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+  display: inline-block;
+}
+
+@keyframes btnSpin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+/* Icon CSS */
+.ctrl-btn i {
+  font-size: 18px;
+  line-height: 1;
+  pointer-events: none;
+  transition: transform 0.2s ease;
+}
