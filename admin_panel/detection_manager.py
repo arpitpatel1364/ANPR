@@ -10,6 +10,7 @@ import tempfile
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from db_connection import DatabaseConnection
 from pdf_export import create_pdf_export
+from auth import admin_required
 
 detection_bp = Blueprint('detection', __name__)
 
@@ -578,6 +579,7 @@ def get_detection_image(filename):
         return jsonify({'error': 'Image not found'}), 404
 
 @detection_bp.route('/detections/delete/<int:detection_id>', methods=['POST'])
+@admin_required
 def delete_detection(detection_id):
     """Delete a specific detection by ID"""
     try:

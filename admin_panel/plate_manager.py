@@ -10,6 +10,7 @@ import requests
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from db_connection import DatabaseConnection
 from websocket_server import broadcast_reload_plates
+from auth import admin_required
 
 plate_bp = Blueprint('plate', __name__)
 
@@ -72,6 +73,7 @@ def plates():
     return render_template('plates.html', plates=plates, total_count=len(plates))
 
 @plate_bp.route('/plates/add', methods=['POST'])
+@admin_required
 def add_plate():
     """Add new plate"""
     plate = request.form.get('plate', '').strip().upper()
@@ -112,6 +114,7 @@ def add_plate():
     return redirect(url_for('plate.plates'))
 
 @plate_bp.route('/plates/delete', methods=['POST'])
+@admin_required
 def delete_plate():
     """Delete plate"""
     plate = request.form.get('plate', '').strip().upper()
@@ -137,6 +140,7 @@ def delete_plate():
     return redirect(url_for('plate.plates'))
 
 @plate_bp.route('/plates/edit', methods=['POST'])
+@admin_required
 def edit_plate():
     """Edit plate"""
     old_plate = request.form.get('old_plate', '').strip().upper()
@@ -168,6 +172,7 @@ def edit_plate():
     return redirect(url_for('plate.plates'))
 
 @plate_bp.route('/plates/bulk_add', methods=['POST'])
+@admin_required
 def bulk_add_plates():
     """Bulk add plates from text input"""
     plates_text = request.form.get('plates_text', '').strip()

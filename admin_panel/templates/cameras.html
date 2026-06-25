@@ -16,6 +16,7 @@
         <div class="action-bar">
             <div class="d-flex justify-content-start align-items-center">
                 <div class="action-content">
+                    {% if session.get('user_role') in ['admin', 'superadmin'] %}
                     <button class="btn btn-primary btn-modern btn-modern-enhanced" data-bs-toggle="modal"
                         data-bs-target="#addCameraModal">
                         <i class="bi bi-plus-circle me-2"></i>Add Camera
@@ -24,6 +25,7 @@
                         onclick="restartService(event)">
                         <i class="bi bi-arrow-clockwise me-2"></i>Restart Service
                     </button>
+                    {% endif %}
                 </div>
             </div>
         </div>
@@ -135,12 +137,16 @@
                         <i class="bi bi-three-dots-vertical"></i>
                     </button>
                     <ul class="dropdown-menu dropdown-menu-end">
+                        {% if session.get('user_role') in ['admin', 'superadmin'] %}
                         <li><a class="dropdown-item" href="#" onclick="editCamera(event, '{{ camera.id }}')"><i class="bi bi-pencil me-2"></i>Edit</a></li>
                         <li><a class="dropdown-item" href="#" onclick="setCameraRoi(event, '{{ camera.id }}')"><i class="bi bi-vector-pen me-2"></i>Set ROI</a></li>
+                        {% endif %}
                         <li><a class="dropdown-item" href="#" onclick="testCameraLive(event, '{{ camera.id }}')"><i class="bi bi-wifi me-2"></i>Test Connection (Live)</a></li>
                         <li><a class="dropdown-item" href="#" onclick="refreshCamerasLive()"><i class="bi bi-arrow-clockwise me-2"></i>Refresh Status</a></li>
+                        {% if session.get('user_role') in ['admin', 'superadmin'] %}
                         <li><hr class="dropdown-divider"></li>
                         <li><a class="dropdown-item text-danger" href="#" onclick="deleteCamera('{{ camera.id }}')"><i class="bi bi-trash me-2"></i>Delete</a></li>
+                        {% endif %}
                     </ul>
                 </div>
             </div>
@@ -242,11 +248,15 @@
             </div>
             <div class="card-footer bg-transparent border-top-0 pt-0 mt-n3 pb-3">
                 <div class="d-flex justify-content-between align-items-center">
+                    {% if session.get('user_role') in ['admin', 'superadmin'] %}
                     <button class="btn btn-sm btn-{{ 'danger' if camera.enabled else 'success' }} fw-bold"
                         onclick="toggleCameraLive('{{ camera.id }}', {{ 'true' if not camera.enabled else 'false' }})">
                         <i class="bi bi-{{ 'stop-circle' if camera.enabled else 'play-circle' }} me-1"></i>
                         {{ 'DISABLE' if camera.enabled else 'ENABLE' }}
                     </button>
+                    {% else %}
+                    <div></div>
+                    {% endif %}
                     <button class="btn btn-sm text-success fw-bold" onclick="testCameraLive(event, '{{ camera.id }}')">
                         <i class="bi bi-wifi me-1"></i>TEST LIVE
                     </button>
@@ -261,9 +271,11 @@
         <div class="text-center py-5">
             <i class="bi bi-camera-video display-4 text-muted"></i>
             <p class="text-muted mt-3">No cameras configured. Add your first camera to get started.</p>
+            {% if session.get('user_role') in ['admin', 'superadmin'] %}
             <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addCameraModal">
                 <i class="bi bi-plus-circle me-1"></i>Add First Camera
             </button>
+            {% endif %}
         </div>
     </div>
     {% endif %}

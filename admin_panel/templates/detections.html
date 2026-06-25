@@ -292,9 +292,11 @@
                                         <button class="btn btn-outline-primary btn-modern btn-modern-enhanced view-details-btn" data-detection='{{ detection|tojson }}' title="View Details">
                                             <i class="bi bi-eye"></i>
                                         </button>
+                                        {% if session.get('user_role') in ['admin', 'superadmin'] %}
                                         <button class="btn btn-outline-danger btn-modern btn-modern-enhanced delete-btn" data-id="{{ detection.id }}" title="Delete Detection">
                                             <i class="bi bi-trash"></i>
                                         </button>
+                                        {% endif %}
                                     </div>
                                 </td>
                             </tr>
@@ -525,6 +527,7 @@ function renderDetectionsTable(data, isLoadMore = false) {
         return;
     }
 
+    const isAdmin = {{ 'true' if session.get('user_role') in ['admin', 'superadmin'] else 'false' }};
     let rowsHtml = '';
     data.detections.forEach((d, i) => {
         currentRowCount++;
@@ -564,9 +567,10 @@ function renderDetectionsTable(data, isLoadMore = false) {
                         <button class="btn btn-outline-primary btn-modern btn-modern-enhanced view-details-btn" data-detection='${detectionJson}' title="View Details">
                             <i class="bi bi-eye"></i>
                         </button>
+                        ${isAdmin ? `
                         <button class="btn btn-outline-danger btn-modern btn-modern-enhanced delete-btn" data-id="${d.id}" title="Delete Detection">
                             <i class="bi bi-trash"></i>
-                        </button>
+                        </button>` : ''}
                     </div>
                 </td>
             </tr>`;

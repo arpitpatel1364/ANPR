@@ -12,12 +12,14 @@
         <div class="action-bar">
             <div class="d-flex justify-content-start align-items-center">
                 <div class="action-content">
+                    {% if session.get('user_role') in ['admin', 'superadmin'] %}
                     <button class="btn btn-primary btn-modern btn-modern-enhanced" data-bs-toggle="modal" data-bs-target="#addPlateModal">
                         <i class="bi bi-plus-circle me-2"></i>Add Plate
                     </button>
                     <button class="btn btn-outline-primary btn-modern btn-modern-enhanced ms-2" data-bs-toggle="modal" data-bs-target="#bulkAddModal">
                         <i class="bi bi-upload me-2"></i>Bulk Add
                     </button>
+                    {% endif %}
                 </div>
             </div>
         </div>
@@ -138,7 +140,9 @@
                                 <th width="15%">District</th>
                                 <th width="15%">Series</th>
                                 <th width="15%">Number</th>
+                                {% if session.get('user_role') in ['admin', 'superadmin'] %}
                                 <th width="15%">Actions</th>
+                                {% endif %}
                             </tr>
                         </thead>
                         <tbody>
@@ -160,6 +164,7 @@
                                 <td>
                                     <span class="badge badge-modern bg-success-gradient">{{ plate[6:] if plate|length > 6 else '-' }}</span>
                                 </td>
+                                {% if session.get('user_role') in ['admin', 'superadmin'] %}
                                 <td>
                                     <div class="btn-group btn-group-sm">
                                         <button class="btn btn-outline-primary btn-modern btn-modern-enhanced" onclick="editPlate('{{ plate }}')" title="Edit Plate">
@@ -170,6 +175,7 @@
                                         </button>
                                     </div>
                                 </td>
+                                {% endif %}
                             </tr>
                             {% endfor %}
                         </tbody>
@@ -180,9 +186,11 @@
                 <div class="text-center py-5">
                     <i class="bi bi-inbox display-4 text-muted"></i>
                     <p class="text-muted mt-3">No plates found. Add your first plate to get started.</p>
+                    {% if session.get('user_role') in ['admin', 'superadmin'] %}
                     <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addPlateModal">
                         <i class="bi bi-plus-circle me-1"></i>Add First Plate
                     </button>
+                    {% endif %}
                 </div>
                 {% endif %}
             </div>
