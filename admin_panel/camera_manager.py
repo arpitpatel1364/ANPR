@@ -12,7 +12,7 @@ from scripts.config_db import (
     update_camera_status_in_db,
     trigger_hot_reload
 )
-from auth import admin_required
+from auth import admin_required, require_auth
 
 def safe_int(value, default=0):
     try:
@@ -251,6 +251,7 @@ def toggle_camera(camera_id):
         })
 
 @camera_bp.route('/cameras/test/<camera_id>')
+@require_auth
 def test_camera(camera_id):
     """Test camera connection"""
     config = load_config_from_db()
@@ -288,6 +289,7 @@ def test_camera(camera_id):
     return jsonify({'status': 'error', 'message': 'Camera not found'})
 
 @camera_bp.route('/cameras/status/<camera_id>')
+@require_auth
 def get_camera_status_endpoint(camera_id):
     """Get real-time camera status"""
     config = load_config_from_db()
@@ -313,6 +315,7 @@ def get_camera_status_endpoint(camera_id):
     }), 404
 
 @camera_bp.route('/cameras/status/all')
+@require_auth
 def get_all_cameras_status():
     """Get status for all cameras"""
     global _CAMERA_STATUS_LAST_UPDATE
@@ -420,6 +423,7 @@ def save_camera_roi(camera_id):
 
 
 @camera_bp.route('/cameras/capture_test_frame', methods=['POST'])
+@require_auth
 def capture_test_frame():
     """Capture a test frame from an RTSP source before saving camera"""
     data = request.get_json()
@@ -486,6 +490,7 @@ def capture_test_frame():
 
 
 @camera_bp.route('/cameras/reload/<camera_id>', methods=['POST'])
+@require_auth
 def reload_camera(camera_id):
     """Trigger hot reload of a specific camera after ROI change"""
     try:
@@ -499,6 +504,7 @@ def reload_camera(camera_id):
         return jsonify({'success': False, 'message': f'Error reloading camera: {e}'}), 500
 
 @camera_bp.route('/cameras/preview_rtsp', methods=['POST'])
+@require_auth
 def preview_rtsp():
     """Capture a single frame from an arbitrary RTSP URL for preview"""
     import sys

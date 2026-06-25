@@ -21,7 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from db_connection import DatabaseConnection
 import hashlib
 from plate_logger import PlateLogger
-from auth import admin_required
+from auth import admin_required, require_auth
 
 api_bridge_bp = Blueprint('api_bridge', __name__)
 
@@ -265,6 +265,7 @@ monitor = ANPRSystemMonitor()
 
 # API Routes
 @api_bridge_bp.route('/api/system/status')
+@require_auth
 def get_system_status():
     """Get real-time system status"""
     try:
@@ -288,6 +289,7 @@ def get_system_status():
         }), 500
 
 @api_bridge_bp.route('/api/detections/recent')
+@require_auth
 def get_recent_detections():
     """Get recent detections"""
     try:
@@ -305,6 +307,7 @@ def get_recent_detections():
         }), 500
 
 @api_bridge_bp.route('/api/dashboard-sync')
+@require_auth
 def dashboard_sync():
     """Consolidated endpoint for dashboard sync with ETag caching"""
     try:
@@ -343,6 +346,7 @@ def dashboard_sync():
         }), 500
 
 @api_bridge_bp.route('/api/detections/stats')
+@require_auth
 def get_detection_stats():
     """Get detection statistics"""
     try:
@@ -359,6 +363,7 @@ def get_detection_stats():
         }), 500
 
 @api_bridge_bp.route('/api/cameras/stats')
+@require_auth
 def get_camera_stats():
     """Get camera statistics"""
     try:
