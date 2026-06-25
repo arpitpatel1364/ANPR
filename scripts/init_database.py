@@ -38,6 +38,7 @@ def main():
         print("  - allowed_plates")
         print("  - users")
         print("  - cameras")
+        print("  - system_settings")
         print()
         print("✅ You can now run the migration script or start using the system!")
     else:
