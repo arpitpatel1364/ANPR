@@ -194,6 +194,20 @@ def require_auth(f):
         return f(*args, **kwargs)
     return decorated_function
 
+def admin_required(f):
+    """Decorator to require admin or superadmin role"""
+    from functools import wraps
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        role = session.get('user_role', 'viewer')
+        if role not in ['admin', 'superadmin']:
+            if request.is_json or request.path.startswith('/api/'):
+                return jsonify({'success': False, 'message': 'Access denied: Admin privileges required'}), 403
+            flash('Access denied. Administrator privileges required.', 'error')
+            return redirect(request.referrer or url_for('dashboard'))
+        return f(*args, **kwargs)
+    return decorated_function
+
 @auth_bp.route('/logout')
 def logout():
     """Enhanced logout with security cleanup"""

@@ -12,6 +12,7 @@ from scripts.config_db import (
     update_camera_status_in_db,
     trigger_hot_reload
 )
+from auth import admin_required
 
 def safe_int(value, default=0):
     try:
@@ -66,6 +67,7 @@ def cameras():
     return render_template('cameras.html', cameras=cameras)
 
 @camera_bp.route('/cameras/add', methods=['POST'])
+@admin_required
 def add_camera():
     """Add new camera"""
     camera_data = {
@@ -137,6 +139,7 @@ def add_camera():
     return redirect(url_for('camera.cameras'))
 
 @camera_bp.route('/cameras/edit/<camera_id>', methods=['POST'])
+@admin_required
 def edit_camera(camera_id):
     """Edit existing camera"""
     config = load_config_from_db()
@@ -183,6 +186,7 @@ def edit_camera(camera_id):
     return redirect(url_for('camera.cameras'))
 
 @camera_bp.route('/cameras/delete/<camera_id>', methods=['POST'])
+@admin_required
 def delete_camera(camera_id):
     """Delete camera"""
     config = load_config_from_db()
@@ -212,6 +216,7 @@ def delete_camera(camera_id):
     return redirect(url_for('camera.cameras'))
 
 @camera_bp.route('/cameras/toggle/<camera_id>', methods=['POST'])
+@admin_required
 def toggle_camera(camera_id):
     """Toggle camera enabled/disabled status"""
     try:
@@ -353,6 +358,7 @@ def get_all_cameras_status():
         }), 500
 
 @camera_bp.route('/cameras/save_roi/<camera_id>', methods=['POST'])
+@admin_required
 def save_camera_roi(camera_id):
     """Save ROI coordinates from web-based selection"""
     import sys
