@@ -572,6 +572,14 @@ def register_websocket_events(socketio: SocketIO):
     def handle_camera_toggle(data):
         """Handle camera enable/disable toggle"""
         try:
+            from flask import session
+            if session.get('user_role') not in ['admin', 'superadmin']:
+                emit('camera_toggle_result', {
+                    'success': False,
+                    'error': 'Administrator privileges required'
+                })
+                return
+                
             camera_id = data.get('camera_id')
             enabled = data.get('enabled', False)
             
