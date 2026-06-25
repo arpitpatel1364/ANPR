@@ -161,6 +161,7 @@
                                 </div>
                             </div>
                         </div>
+                        {% if session.get('user_role') in ['admin', 'superadmin'] %}
                         <div class="control-btn-group ms-auto">
                           <!-- Play -->
                           <button class="ctrl-btn ctrl-btn--play" onclick="startANPRService()" id="startServiceBtn" title="Start" aria-label="Start service">
@@ -177,6 +178,7 @@
                             <i class="ti ti-refresh"></i>
                           </button>
                         </div>
+                        {% endif %}
                     </div>
                     <div class="card-body">
                         <div class="row">
