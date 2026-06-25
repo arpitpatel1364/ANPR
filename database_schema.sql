@@ -86,9 +86,4 @@ CREATE TABLE IF NOT EXISTS system_settings (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- Insert default admin user (password: admin123 - change this!)
--- Password hash for 'admin123' using werkzeug's generate_password_hash
-INSERT INTO users (username, password_hash, role) 
-VALUES ('admin', 'pbkdf2:sha256:260000$YourSaltHere$hash', 'admin')
-ON DUPLICATE KEY UPDATE username=username;
 

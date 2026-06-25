@@ -111,9 +111,6 @@
                         <button class="action-btn clear-btn" onclick="clearSearch()">
                             <i class="bi bi-x-circle me-1"></i>Clear
                         </button>
-                        <button class="action-btn danger-btn" onclick="removeDuplicates()">
-                            <i class="bi bi-trash me-1"></i>Remove Duplicates
-                        </button>
                     </div>
                 </div>
             </div>
@@ -362,17 +359,6 @@ function editPlate(plate) {
     new bootstrap.Modal(document.getElementById('editModal')).show();
 }
 
-// Remove duplicates
-function removeDuplicates() {
-    if (confirm('This will remove all duplicate plates from the database. Continue?')) {
-        // Create a form dynamically and submit it
-        const form = document.createElement('form');
-        form.method = 'POST';
-        form.action = "{{ url_for('plate.remove_duplicates') }}";
-        document.body.appendChild(form);
-        form.submit();
-    }
-}
 
 // Auto-format plate input
 document.getElementById('plate').addEventListener('input', function() {

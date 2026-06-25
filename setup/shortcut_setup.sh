@@ -40,7 +40,9 @@ if [ -d "$DESKTOP_DIR" ]; then
     
     # Trust the desktop file on modern GNOME/Ubuntu (gio set)
     if command -v gio >/dev/null 2>&1; then
-        sudo -u "$USER_NAME" gio set "$DESKTOP_FILE" metadata::trusted true 2>/dev/null || true
+        # Export DBUS_SESSION_BUS_ADDRESS to allow gio set to work when running via sudo
+        export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$(id -u "$USER_NAME")/bus"
+        sudo -u "$USER_NAME" DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" gio set "$DESKTOP_FILE" metadata::trusted true 2>/dev/null || true
     fi
     info "Desktop entry created at $DESKTOP_FILE"
 fi
