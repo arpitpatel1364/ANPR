@@ -7,24 +7,24 @@
 
 {% block content %}
 <!-- Action Bar -->
+{% if session.get('user_role') in ['admin', 'superadmin'] %}
 <div class="row mb-4">
     <div class="col-12">
         <div class="action-bar">
             <div class="d-flex justify-content-start align-items-center">
                 <div class="action-content">
-                    {% if session.get('user_role') in ['admin', 'superadmin'] %}
                     <button class="btn btn-primary btn-modern btn-modern-enhanced" data-bs-toggle="modal" data-bs-target="#addPlateModal">
                         <i class="bi bi-plus-circle me-2"></i>Add Plate
                     </button>
                     <button class="btn btn-outline-primary btn-modern btn-modern-enhanced ms-2" data-bs-toggle="modal" data-bs-target="#bulkAddModal">
                         <i class="bi bi-upload me-2"></i>Bulk Add
                     </button>
-                    {% endif %}
                 </div>
             </div>
         </div>
     </div>
 </div>
+{% endif %}
 
 <!-- Statistics Cards -->
 <div class="row mb-5">

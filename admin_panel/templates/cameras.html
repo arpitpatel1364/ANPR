@@ -11,12 +11,12 @@
 
 {% block content %}
 <!-- Action Bar -->
+{% if session.get('user_role') in ['admin', 'superadmin'] %}
 <div class="row mb-4">
     <div class="col-12">
         <div class="action-bar">
             <div class="d-flex justify-content-start align-items-center">
                 <div class="action-content">
-                    {% if session.get('user_role') in ['admin', 'superadmin'] %}
                     <button class="btn btn-primary btn-modern btn-modern-enhanced" data-bs-toggle="modal"
                         data-bs-target="#addCameraModal">
                         <i class="bi bi-plus-circle me-2"></i>Add Camera
@@ -25,12 +25,12 @@
                         onclick="restartService(event)">
                         <i class="bi bi-arrow-clockwise me-2"></i>Restart Service
                     </button>
-                    {% endif %}
                 </div>
             </div>
         </div>
     </div>
 </div>
+{% endif %}
 
 <!-- Statistics Cards -->
 <div class="row mb-5">
