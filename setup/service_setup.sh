@@ -10,6 +10,7 @@ cat > /etc/systemd/system/anpr-multi-camera.service <<EOF
 [Unit]
 Description=ANPR Backend
 After=network.target mysql.service
+Wants=mysql.service
 
 [Service]
 User=$USER_NAME
@@ -28,6 +29,7 @@ cat > /etc/systemd/system/anpr-admin-panel.service <<EOF
 [Unit]
 Description=ANPR Admin
 After=network.target mysql.service
+Wants=mysql.service
 
 [Service]
 User=$USER_NAME

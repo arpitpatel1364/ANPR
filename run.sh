@@ -76,14 +76,10 @@ ensure_mysql_running() {
         return 0
     fi
 
-    log "Starting MySQL service..."
-
-    if systemctl list-unit-files | grep -q mysql.service; then
-        sudo systemctl start mysql || die "Failed to start mysql"
-    elif systemctl list-unit-files | grep -q mariadb.service; then
-        sudo systemctl start mariadb || die "Failed to start mariadb"
-    else
-        die "No MySQL/MariaDB service found. Install via setup.sh"
+    log "Verifying MySQL is running..."
+    
+    if ! systemctl is-active --quiet mysql; then
+        die "MySQL service is not running. Start it first or rely on systemd dependencies."
     fi
 
     wait_for_mysql 60

@@ -24,6 +24,7 @@ info "Configuring MySQL root user..."
 sudo mysql -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '';" || true
 sudo mysql -e "CREATE USER IF NOT EXISTS 'root'@'127.0.0.1' IDENTIFIED WITH mysql_native_password BY '';" || true
 sudo mysql -e "GRANT ALL PRIVILEGES ON *.* TO 'root'@'127.0.0.1' WITH GRANT OPTION;" || true
+sudo mysql -e "CREATE DATABASE IF NOT EXISTS anpr_system CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;" || true
 sudo mysql -e "FLUSH PRIVILEGES;" || true
 
 source "$ROOT_DIR/anpr_env/bin/activate"

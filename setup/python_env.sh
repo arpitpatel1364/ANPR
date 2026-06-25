@@ -5,9 +5,9 @@ VENV="$ROOT_DIR/anpr_env"
 
 info "Setting up Python environment..."
 
-command -v python3 || die "Python3 missing"
+command -v /usr/bin/python3 || die "Python3 missing"
 
-[[ ! -d "$VENV" ]] && python3 -m venv "$VENV"
+[[ ! -d "$VENV" ]] && /usr/bin/python3 -m venv "$VENV"
 
 source "$VENV/bin/activate"
 
