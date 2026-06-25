@@ -20,6 +20,12 @@ for i in {1..30}; do
     sleep 2
 done
 
+info "Configuring MySQL root user..."
+sudo mysql -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '';" || true
+sudo mysql -e "CREATE USER IF NOT EXISTS 'root'@'127.0.0.1' IDENTIFIED WITH mysql_native_password BY '';" || true
+sudo mysql -e "GRANT ALL PRIVILEGES ON *.* TO 'root'@'127.0.0.1' WITH GRANT OPTION;" || true
+sudo mysql -e "FLUSH PRIVILEGES;" || true
+
 source "$ROOT_DIR/anpr_env/bin/activate"
 
 if [[ -f "$ROOT_DIR/scripts/init_database.py" ]]; then
