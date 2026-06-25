@@ -1,4 +1,3 @@
-```bash
 #!/usr/bin/env bash
 
 # 🔥 ANPR Service Runner & Manager (Production Ready)
@@ -186,4 +185,3 @@ case "$1" in
     help|-h|--help) show_help ;;
     *) die "Unknown command: $1" ;;
 esac
-```
