@@ -8,7 +8,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # === CONFIG ===
 APP_NAME="ANPR Admin Panel"
 URL="http://localhost:8084"
-ICON_PATH="$ROOT_DIR/admin_panel/static/images/favicon.png"
+ICON_PATH="$ROOT_DIR/admin_panel/static/images/icon.png"
 
 # Use the user's Desktop directory explicitly
 DESKTOP_DIR="$USER_HOME/Desktop"
