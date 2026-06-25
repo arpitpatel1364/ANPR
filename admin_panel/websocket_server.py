@@ -35,8 +35,22 @@ class WebSocketManager:
         self.update_queue = queue.Queue()
         self.running = True
         self.last_detection_time = None
-        self.last_detection_count = 0
-        self.last_seen_id = 0
+        
+        # Initialize counts from DB on startup
+        try:
+            with DatabaseConnection() as db:
+                db.execute("SELECT COUNT(*) as count FROM detections")
+                result = db.fetchone()
+                self.last_detection_count = result['count'] if result else 0
+                
+                db.execute("SELECT MAX(id) as max_id FROM detections")
+                result = db.fetchone()
+                self.last_seen_id = result['max_id'] if result and result['max_id'] is not None else 0
+        except Exception as e:
+            print(f"Error initializing detection count in WebSocketManager: {e}")
+            self.last_detection_count = 0
+            self.last_seen_id = 0
+            
         self.camera_status_cache = {}
         self._anpr_running_cache = (False, 0.0)
         
@@ -397,6 +411,50 @@ class WebSocketManager:
             print(f"Error getting this month's detections: {e}")
             return 0
     
+    def _get_all_detection_stats(self) -> Dict[str, Any]:
+        """Get all detection statistics in a single query to avoid N+1 queries"""
+        try:
+            with DatabaseConnection() as db:
+                query = """
+                    SELECT
+                        COUNT(*) as total,
+                        SUM(verification_status = 'VERIFIED') as verified,
+                        SUM(verification_status = 'NOT_VERIFIED') as not_verified,
+                        SUM(DATE(timestamp) = CURRENT_DATE()) as today,
+                        SUM(DATE(timestamp) >= DATE_SUB(CURRENT_DATE(), INTERVAL WEEKDAY(CURRENT_DATE()) DAY)) as this_week,
+                        SUM(DATE_FORMAT(timestamp, '%%Y-%%m') = DATE_FORMAT(CURRENT_DATE(), '%%Y-%%m')) as this_month,
+                        MAX(timestamp) as last_time
+                    FROM detections
+                """
+                db.execute(query)
+                res = db.fetchone()
+                
+                stats = {
+                    'total_detections': int(res['total'] or 0) if res else 0,
+                    'verified_detections': int(res['verified'] or 0) if res else 0,
+                    'not_verified_detections': int(res['not_verified'] or 0) if res else 0,
+                    'detections_today': int(res['today'] or 0) if res else 0,
+                    'detections_this_week': int(res['this_week'] or 0) if res else 0,
+                    'detections_this_month': int(res['this_month'] or 0) if res else 0,
+                    'last_detection_time': 'Never'
+                }
+                
+                if res and res['last_time']:
+                    stats['last_detection_time'] = res['last_time'].isoformat() if hasattr(res['last_time'], 'isoformat') else str(res['last_time'])
+                    
+                return stats
+        except Exception as e:
+            print(f"Error getting all detection stats in WebSocketManager: {e}")
+            return {
+                'total_detections': self.last_detection_count,
+                'verified_detections': 0,
+                'not_verified_detections': 0,
+                'detections_today': 0,
+                'detections_this_week': 0,
+                'detections_this_month': 0,
+                'last_detection_time': 'Never'
+            }
+
     def stop(self):
         """Stop the WebSocket manager"""
         self.running = False
@@ -510,19 +568,44 @@ def register_websocket_events(socketio: SocketIO):
                 'timestamp': datetime.now().isoformat()
             }, broadcast=True)
             
-            # Also send to specific rooms
-            emit('detection_update', {
-                'total_detections': ws_manager.last_detection_count + 1,
-                'verified_detections': 1 if data.get('verification_status') == 'VERIFIED' else 0,
-                'not_verified_detections': 1 if data.get('verification_status') != 'VERIFIED' else 0,
-                'last_detection_time': data.get('timestamp'),
-                'detections_today': ws_manager._get_detections_today(),
-                'detections_this_week': ws_manager._get_detections_this_week(),
-                'detections_this_month': ws_manager._get_detections_this_month()
-            }, room='dashboard')
+            # Self-healing/auto-correcting stats aggregation logic
+            prev_total = ws_manager.last_detection_count
+            db_stats = ws_manager._get_all_detection_stats()
+            
+            db_total = db_stats['total_detections']
+            is_verified = (data.get('verification_status') == 'VERIFIED')
+            
+            if db_total > prev_total:
+                # Database has already processed and inserted this detection
+                total_detections = db_total
+                verified_detections = db_stats['verified_detections']
+                not_verified_detections = db_stats['not_verified_detections']
+                detections_today = db_stats['detections_today']
+                detections_this_week = db_stats['detections_this_week']
+                detections_this_month = db_stats['detections_this_month']
+            else:
+                # Database is lagging (async insert is still in queue)
+                total_detections = prev_total + 1
+                verified_detections = db_stats['verified_detections'] + (1 if is_verified else 0)
+                not_verified_detections = db_stats['not_verified_detections'] + (1 if not is_verified else 0)
+                detections_today = db_stats['detections_today'] + 1
+                detections_this_week = db_stats['detections_this_week'] + 1
+                detections_this_month = db_stats['detections_this_month'] + 1
             
             # Update detection count
-            ws_manager.last_detection_count += 1
+            ws_manager.last_detection_count = total_detections
+            
+            # Also send to specific rooms
+            emit('detection_update', {
+                'total_detections': total_detections,
+                'verified_detections': verified_detections,
+                'not_verified_detections': not_verified_detections,
+                'last_detection_time': data.get('timestamp') or datetime.now().isoformat(),
+                'detections_today': detections_today,
+                'detections_this_week': detections_this_week,
+                'detections_this_month': detections_this_month
+            }, room='dashboard')
+            
             timestamp = data.get('timestamp')
             if timestamp:
                 # Ensure timestamp is a string (ISO format)
