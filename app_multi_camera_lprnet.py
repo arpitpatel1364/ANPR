@@ -24,80 +24,32 @@ wait_for_db_connection(max_retries=15, retry_delay=2)
 from scripts.config_db import ensure_system_mode_set
 ensure_system_mode_set()
 
-def can_use_display():
-    """
-    Check if a display is actually available and accessible.
-    Returns True if X11/Wayland display is available, False otherwise.
-    """
-    # Check DISPLAY or WAYLAND_DISPLAY environment variable
-    display = os.environ.get("WAYLAND_DISPLAY") or os.environ.get("DISPLAY")
-    if not display:
-        return False
-    
-    # For Wayland, just check if the variable is set
-    if os.environ.get("WAYLAND_DISPLAY"):
-        return True
-    
-    # For X11, try to connect to display
-    if os.environ.get("DISPLAY"):
-        try:
-            import subprocess
-            # Try xset first, but fall back to just checking if DISPLAY is set
-            result = subprocess.run(["xset", "q"], capture_output=True, timeout=2)
-            if result.returncode == 0:
-                return True
-            else:
-                # xset failed, but DISPLAY is set - assume display is available
-                print(f"⚠️  xset command failed, but DISPLAY={display} is set. Assuming display available.")
-                return True
-        except Exception as e:
-            # xset not available or failed, but DISPLAY is set - assume display is available
-            print(f"⚠️  xset command not available or failed ({e}), but DISPLAY={display} is set. Assuming display available.")
-            return True
-    
-    return False
-
-def load_headless_mode_from_config(config_path=None):
-    """
-    Load headless_mode flag EARLY (before importing cv2).
-    Safe defaults:
-      - If config missing → headless
-      - If key missing   → headless
-    """
+def load_headless_mode_from_config():
     try:
         cfg = config_db.load_config_from_db()
         if cfg:
             display_cfg = cfg.get("display_settings", {})
-            return bool(display_cfg.get("headless_mode", True))
+            val = bool(display_cfg.get("headless_mode", True))
+            if not val and not os.environ.get("DISPLAY"):
+                print("⚠️  Config says headless_mode=false, but no display detected")
+                print(">> Falling back to HEADLESS mode (no X11 display available)")
+                return True
+            return val
     except Exception as e:
         print(f"!!..Early config load failed ({e}), forcing HEADLESS mode..!!")
     
     return True
 
+HEADLESS_MODE = load_headless_mode_from_config()
 
-# Decide mode BEFORE OpenCV / Qt loads
-REQUESTED_HEADLESS_MODE = load_headless_mode_from_config()
-CAN_USE_DISPLAY = can_use_display() if not REQUESTED_HEADLESS_MODE else False
-HEADLESS_MODE = not CAN_USE_DISPLAY  # True if we can't use display
-
-if REQUESTED_HEADLESS_MODE and not CAN_USE_DISPLAY:
-    print(">> Starting in HEADLESS mode (from DB config)")
+if HEADLESS_MODE:
+    print(">> Starting in HEADLESS mode")
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
     os.environ["DISPLAY"] = ""
-elif REQUESTED_HEADLESS_MODE and CAN_USE_DISPLAY:
-    print("⚠️  Config says headless_mode=true, but display is available")
-    print(">> Starting in HEADLESS mode (respecting DB config)")
-    os.environ["QT_QPA_PLATFORM"] = "offscreen"
-    os.environ["DISPLAY"] = ""
-elif not REQUESTED_HEADLESS_MODE and CAN_USE_DISPLAY:
-    print(">> Starting in DISPLAY mode (from DB config and display detected)")
+else:
+    print(">> Starting in DISPLAY mode")
     os.environ["QT_QPA_PLATFORM"] = "xcb"
-elif not REQUESTED_HEADLESS_MODE and not CAN_USE_DISPLAY:
-    print("⚠️  Config says headless_mode=false, but no display detected")
-    print(">> Falling back to HEADLESS mode (no X11 display available)")
-    os.environ["QT_QPA_PLATFORM"] = "offscreen"
-    os.environ["DISPLAY"] = ""
-    HEADLESS_MODE = True
+CAN_USE_DISPLAY = not HEADLESS_MODE
 
 os.environ['OPENCV_VIDEOIO_PRIORITY_MSMF'] = '0'
 # Prevent OpenCV from trying to use GUI backends
@@ -324,7 +276,7 @@ inference_semaphore = None
 global_frame_queue = queue.Queue(maxsize=32)
 pool_lock = Lock()
 active_futures = {}  # {future: {'start_time': t, 'shms': [shm_name1, ...]}}
-INFERENCE_TIMEOUT = 20.0
+INFERENCE_TIMEOUT = 90.0  # Increased to prevent timeouts during heavy model initialization
 BATCH_SIZE = 4
 
 def get_shared_memory(shape, dtype, data):
@@ -350,71 +302,7 @@ worker_yolo = None
 worker_lprnet = None
 worker_device = 'cpu'
 
-def setup_worker_cpu():
-    import os
-    import psutil
 
-    try:
-        p = psutil.Process(os.getpid())
-        num_cores = psutil.cpu_count(logical=True)
-
-        # Set lower priority (best-effort)
-        try:
-            p.nice(5)
-        except Exception:
-            pass
-
-        # 🔹 Low-core fallback
-        if num_cores <= 2:
-            if num_cores == 2:
-                try:
-                    p.cpu_affinity([1])
-                except Exception:
-                    pass
-            print(f"📌 [Worker {os.getpid()}] Low-core fallback. nice=5")
-            return
-
-        # 🔹 Worker config
-        worker_id = int(os.environ.get("WORKER_ID", 0))
-        total_workers = max(1, int(os.environ.get("TOTAL_WORKERS", 1)))
-
-        # Reserve first 2 cores
-        available_cores = list(range(2, num_cores))
-
-        if not available_cores:
-            print(f"⚠️ No available cores after reservation")
-            return
-
-        # 🔹 Balanced core distribution
-        chunk_size = max(1, len(available_cores) // total_workers)
-
-        start = worker_id * chunk_size
-        end = start + chunk_size
-
-        # Last worker takes remaining cores
-        if worker_id == total_workers - 1:
-            end = len(available_cores)
-
-        assigned_cores = available_cores[start:end]
-
-        # 🔹 Safety fallback (never empty)
-        if not assigned_cores:
-            assigned_cores = [available_cores[worker_id % len(available_cores)]]
-
-        # 🔹 Apply affinity
-        try:
-            p.cpu_affinity(assigned_cores)
-        except Exception as e:
-            print(f"⚠️ Affinity set failed: {e}")
-            return
-
-        print(
-            f"📌 [Worker {os.getpid()}] "
-            f"ID={worker_id}/{total_workers} → cores={assigned_cores}, nice=5"
-        )
-
-    except Exception as e:
-        print(f"⚠️ CPU setup failed for worker {os.getpid()}: {e}")
 
 
 def init_worker(yolo_path, lprnet_path, worker_id_counter=None, total_workers=2):
@@ -437,8 +325,6 @@ def init_worker(yolo_path, lprnet_path, worker_id_counter=None, total_workers=2)
         import time
         time.sleep(worker_id * 0.5) # Fix 5: Worker initialization stagger
 
-    setup_worker_cpu()
-
     project_dir = os.path.dirname(os.path.abspath(__file__))
     if project_dir not in sys.path:
         sys.path.insert(0, project_dir)
@@ -448,17 +334,11 @@ def init_worker(yolo_path, lprnet_path, worker_id_counter=None, total_workers=2)
     from ultralytics import YOLO
     from LPRNet import LPRNet
     
-    # Configure CPU thread counts for the subprocesses to prevent core thrashing
+    # Allow PyTorch to dynamically utilize all available CPU cores for inference
     try:
-        torch.set_num_threads(1)
-    except RuntimeError:
-        pass
-    try:
-        torch.set_num_interop_threads(1)
-    except RuntimeError:
-        pass
-    try:
-        cv2.setNumThreads(1)
+        import psutil
+        num_cores = psutil.cpu_count(logical=False) or psutil.cpu_count(logical=True) or 4
+        torch.set_num_threads(num_cores)
     except Exception:
         pass
     
@@ -579,20 +459,7 @@ def worker_batch_inference(batch_inputs, inference_imgsz, confidence_threshold):
     """
     Executes inference for a batch of frames in the worker process.
     """
-    import threading
-    import os
-    import time
-    
-    # Fix 2: Non-blocking workers (Watchdog)
-    def watchdog():
-        time.sleep(10.0)
-        print(f"💀 [WORKER {os.getpid()}] Watchdog triggered! Forcing exit.")
-        os._exit(1)
-        
-    wd_timer = threading.Timer(10.0, watchdog)
-    wd_timer.daemon = True
-    wd_timer.start()
-    
+
     try:
         global worker_yolo, worker_lprnet, worker_device
         import numpy as np
@@ -786,27 +653,15 @@ def worker_batch_inference(batch_inputs, inference_imgsz, confidence_threshold):
             results.append((cam_id, camera_detections[cam_id]))
                 
         return results
-    finally:
-        wd_timer.cancel()
+    except Exception as e:
+        raise e
 
 def load_models():
     """No-op as models are lazy-loaded within worker processes"""
     pass
 
-# Define confusion mapping for common OCR errors
-# digits that look like letters (and vice versa)
-digit_to_letter = {'0': 'O', '1': 'I', '2': 'Z',
-    '5': 'S', '6': 'G', '8': 'B', '9': 'P'}
-letter_to_digit = {v: k for k, v in digit_to_letter.items()}
-
-# some letters are frequently confused with each other by OCR, especially
-# D ↔ O (rounded shapes). This dictionary lets the HMM give a boost when an
-# observed letter is a common mis-read of the candidate.
-LETTER_CONFUSIONS = {
-    'D': ['O'],
-    'O': ['D'],
-    # add more pairs here if other confusions are noticed
-}
+# OCR configurations and confusion mappings (if any)
+# Removed LETTER_CONFUSIONS and digit_to_letter as per user request to simplify and remove HMM.
 
 # Indian number plate regex patterns (supports old, new, and brand new formats)
 # Old format: XX##XX#### (e.g., MH12AB1234) - 2 letters, 2 digits, 2 letters, 4 digits
@@ -1065,125 +920,9 @@ class CameraProcessor:
         cleaned_text_with_spaces = re.sub(r'\s+', ' ', cleaned_text_with_spaces)
         cleaned_text_no_spaces = cleaned_text_with_spaces.replace(' ', '')
 
-        if len(cleaned_text_no_spaces) in [10, 11]:
-            corrected_text_no_spaces = self.hmm_correct_plate(cleaned_text_no_spaces)
-            # Reconstruct with spaces
-            corrected_text = ""
-            idx = 0
-            for char in cleaned_text_with_spaces:
-                if char.isspace():
-                    corrected_text += char
-                else:
-                    if idx < len(corrected_text_no_spaces):
-                        corrected_text += corrected_text_no_spaces[idx]
-                        idx += 1
-            # In case the lengths don't exactly match due to some reason
-            if idx < len(corrected_text_no_spaces):
-                corrected_text += corrected_text_no_spaces[idx:]
-        else:
-            corrected_text = cleaned_text_with_spaces
+        corrected_text = cleaned_text_with_spaces
 
         return corrected_text
-
-    def hmm_correct_plate(self, obs_text):
-        """HMM correction for multiple license plate formats (10 and 11 chars)"""
-        n = len(obs_text)
-        if n not in [10, 11]:
-            return obs_text
-
-        templates_10 = [
-            ['letter', 'letter', 'digit', 'digit', 'letter', 'letter', 'digit', 'digit', 'digit', 'digit'], # AAXXAAXXXX
-            ['digit', 'digit', 'letter', 'letter', 'digit', 'digit', 'digit', 'digit', 'letter', 'letter'], # YYBH####XX
-            ['letter', 'letter', 'digit', 'digit', 'digit', 'letter', 'digit', 'digit', 'digit', 'digit'] # AAXX XA XXXX
-        ]
-        templates_11 = [
-            ['letter', 'letter', 'digit', 'digit', 'letter', 'letter', 'letter', 'digit', 'digit', 'digit', 'digit'], # AAXXAAAXXXX
-            ['digit', 'digit', 'letter', 'letter', 'digit', 'digit', 'digit', 'digit', 'letter', 'letter', 'letter'] # YYBH####XXX
-        ]
-
-        templates = templates_10 if n == 10 else templates_11
-
-        letter_candidates = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
-        digit_candidates = list("0123456789")
-
-        def emission_prob(expected_type, candidate, observed):
-            candidate = candidate.upper() if expected_type == 'letter' else candidate
-            observed = observed.upper() if expected_type == 'letter' else observed
-            if expected_type == 'letter':
-                if observed.isalpha():
-                    if candidate == observed:
-                        return 0.9
-                    # treat common letter-letter confusions with moderate weight
-                    elif observed in LETTER_CONFUSIONS.get(candidate, []):
-                        return 0.5
-                    else:
-                        return 0.1 / (len(letter_candidates) - 1)
-                elif observed.isdigit():
-                    if digit_to_letter.get(observed, None) == candidate:
-                        return 0.5
-                    else:
-                        return 0.01
-                else:
-                    return 0.01
-            else:  # expected digit
-                if observed.isdigit():
-                    return 0.9 if candidate == observed else 0.1 / (len(digit_candidates) - 1)
-                elif observed.isalpha():
-                    if letter_to_digit.get(observed, None) == candidate:
-                        return 0.5
-                    else:
-                        return 0.01
-                else:
-                    return 0.01
-
-        best_overall_sequence = obs_text
-        best_overall_prob = -1
-
-        for expected_types in templates:
-            dp = []
-            backpointer = []
-
-            # Initialization
-            current_candidates = letter_candidates if expected_types[0] == 'letter' else digit_candidates
-            dp0 = {}
-            bp0 = {}
-            for c in current_candidates:
-                dp0[c] = emission_prob(expected_types[0], c, obs_text[0])
-                bp0[c] = None
-            dp.append(dp0)
-            backpointer.append(bp0)
-
-            # Recursion
-            for i in range(1, n):
-                current_candidates = letter_candidates if expected_types[i] == 'letter' else digit_candidates
-                dp_curr = {}
-                bp_curr = {}
-                for curr in current_candidates:
-                    max_prob = -1
-                    best_prev = None
-                    for prev, prev_prob in dp[i - 1].items():
-                        prob = prev_prob * emission_prob(expected_types[i], curr, obs_text[i])
-                        if prob > max_prob:
-                            max_prob = prob
-                            best_prev = prev
-                    dp_curr[curr] = max_prob
-                    bp_curr[curr] = best_prev
-                dp.append(dp_curr)
-                backpointer.append(bp_curr)
-
-            # Termination and backtrace
-            last_candidates = dp[-1]
-            best_last = max(last_candidates, key=last_candidates.get)
-            max_template_prob = last_candidates[best_last]
-
-            if max_template_prob > best_overall_prob:
-                best_overall_prob = max_template_prob
-                best_sequence = [best_last]
-                for i in range(n - 1, 0, -1):
-                    best_sequence.insert(0, backpointer[i][best_sequence[0]])
-                best_overall_sequence = "".join(best_sequence)
-
-        return best_overall_sequence
 
     # ============================================================================
     # convert_ocr_format method to CameraProcessor class
@@ -1510,8 +1249,7 @@ class CameraProcessor:
         """
         global stop_processing, inference_executor, inference_semaphore
         
-        # Initialize last_gray_frame for motion detection
-        self.last_gray_frame = None
+        global stop_processing, inference_executor, inference_semaphore
         
         reconnect_delay_base = 5.0
         reconnect_delay_max = 60.0
@@ -1620,34 +1358,7 @@ class CameraProcessor:
                     # Update thread-safe display property (Section 1.4)
                     self.current_processed_frame = frame_copy
                     
-                    # Cheap Motion Detection (Section 2.4)
-                    is_motion = True
-                    try:
-                        h_g, w_g = frame_resized.shape[:2]
-                        if w_g > 320:
-                            s_g = 320.0 / w_g
-                            gray_small = cv2.resize(cv2.cvtColor(frame_resized, cv2.COLOR_BGR2GRAY), (320, int(h_g * s_g)), interpolation=cv2.INTER_LINEAR)
-                        else:
-                            gray_small = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2GRAY)
-                            
-                        if self.last_gray_frame is not None and self.last_gray_frame.shape == gray_small.shape:
-                            diff = cv2.absdiff(self.last_gray_frame, gray_small)
-                            mean_diff = np.mean(diff)
-                            if mean_diff < 8.0:
-                                is_motion = False
-                        self.last_gray_frame = gray_small
-                    except Exception as e:
-                        pass
-                        
-                    if not is_motion:
-                        # Clean up queue on no-motion
-                        try:
-                            while not self.frame_queue.empty():
-                                self.frame_queue.get_nowait()
-                        except:
-                            pass
-                        time.sleep(0.01) # Adaptive pacing sleep
-                        continue
+                    pass
                         
                     # Apply Conditional CLAHE + Unsharp Mask ONLY if motion detected
                     frame_resized = enhance_frame_if_dark(
@@ -1672,20 +1383,8 @@ class CameraProcessor:
                             except Exception:
                                 pass
                                 
-                    # Dynamic FPS Throttling (Section 2.3)
-                    if not hasattr(self, '_last_cpu_check') or current_time - self._last_cpu_check > 2.0:
-                        self._last_cpu_check = current_time
-                        self._cpu_usage = psutil.cpu_percent(interval=None)
-                    
-                    cpu_usage = getattr(self, '_cpu_usage', 50.0)
-                    if cpu_usage >= 95.0:
-                        target_interval = 0.20  # ~5 FPS
-                    elif cpu_usage >= 85.0:
-                        target_interval = 0.10  # ~10 FPS
-                    elif cpu_usage >= 70.0:
-                        target_interval = 0.06  # ~15 FPS
-                    else:
-                        target_interval = 0.03  # ~30 FPS
+                    # Fixed FPS Throttling (10 FPS)
+                    target_interval = 0.10  # 10 FPS
                     
                     if current_time - self.last_put_time > target_interval:
                         self.last_put_time = current_time
@@ -2360,10 +2059,10 @@ def signal_handler(signum, frame):
     logging.info("Shutdown signal received. Stopping ANPR system...")
     stop_processing = True
 
-def rebuild_pool(safe_mode=False):
-    """Nuclear option: Recreates the entire process pool cleanly"""
+def rebuild_pool():
+    """Recreates the pool cleanly using a lightweight ThreadPoolExecutor"""
     global inference_executor, spawn_context, worker_id_counter
-    print("🔄 [SUPERVISOR] Rebuilding broken ProcessPoolExecutor...")
+    print("🔄 [SUPERVISOR] Rebuilding ThreadPoolExecutor...")
     if inference_executor:
         try:
             inference_executor.shutdown(wait=False, cancel_futures=True)
@@ -2377,60 +2076,23 @@ def rebuild_pool(safe_mode=False):
         worker_id_counter.value = 0
         
     import concurrent.futures
-    import psutil
     
-    num_cores = psutil.cpu_count(logical=False)
-    if num_cores is None: 
-        num_cores = psutil.cpu_count(logical=True)
+    # Lightweight single-thread batch inference (saves RAM and removes IPC overhead)
+    max_workers = 1
     
-    # Reserve 1 core for the main thread and I/O
-    max_workers = 1 if safe_mode else max(1, (num_cores or 2) - 1)
-    
-    print(f"🔄 [SUPERVISOR] Rebuilding ProcessPoolExecutor with {max_workers} dynamic workers...")
-    inference_executor = concurrent.futures.ProcessPoolExecutor(
+    print(f"🔄 [SUPERVISOR] Starting ThreadPoolExecutor with {max_workers} thread(s)...")
+    inference_executor = concurrent.futures.ThreadPoolExecutor(
         max_workers=max_workers,
         initializer=init_worker,
-        initargs=(yolo_path, lprnet_path, worker_id_counter, max_workers),
-        mp_context=spawn_context
+        initargs=(yolo_path, lprnet_path, worker_id_counter, max_workers)
     )
     print("✅ [SUPERVISOR] Pool rebuilt successfully.")
 
 def inference_supervisor_loop():
-    """Monitors pool health, handles timeouts, and dispatches true batches"""
-    global inference_executor, active_futures
-    
-    rebuild_count = 0
-    safe_mode = False
+    """Simple inference loop without hung worker monitoring and timeouts."""
+    global inference_executor
     
     while not stop_processing:
-        # 1. Hang Protection Check
-        now = time.time()
-        hung = False
-        with pool_lock:
-            for fut, meta in list(active_futures.items()):
-                if not fut.done() and (now - meta['start_time'] > INFERENCE_TIMEOUT):
-                    print("💀 [SUPERVISOR] Worker HANG detected! Timeout exceeded.")
-                    hung = True
-                    for shm in meta['shms']:
-                        cleanup_shared_memory(shm)
-                    active_futures.pop(fut, None)
-                    fut.cancel()
-
-        if hung:
-            rebuild_count += 1
-            if rebuild_count > 3:
-                print("🚨 [SUPERVISOR] SAFE MODE ACTIVATED: Scaling down workers due to instability.")
-                safe_mode = True
-                rebuild_count = 0
-                time.sleep(5)
-                
-            backoff_sleep = min(10, 2 ** rebuild_count)
-            time.sleep(backoff_sleep)
-            with pool_lock:
-                rebuild_pool(safe_mode=safe_mode)
-                continue
-
-        # 2. Collect a True Batch
         batch = []
         try:
             # Wait for at least one frame
@@ -2459,58 +2121,40 @@ def inference_supervisor_loop():
             except Exception:
                 pass
                 
-            # Fix 4: Fallback bytes transmission
             frame_fallback = cv2.imencode('.jpg', fr_resized, [cv2.IMWRITE_JPEG_QUALITY, 85])[1].tobytes()
             batch_inputs.append((data['camera_id'], shm_name, fr_resized.shape, fr_resized.dtype, data['camera_processor'].roi, data['camera_processor'].roi_polygon, frame_fallback))
             orig_frames.append(data['frame_original'])
             cam_procs.append(data['camera_processor'])
 
-        # 3. Submit and Monitor
-        with pool_lock:
-            try:
-                # Use a representative inference_imgsz based on the first item or global setting
-                inf_imgsz = 320 if cam_procs[0].global_settings.get('low_end_mode', True) else 640
-                conf_thresh = cam_procs[0].confidence_threshold
-                future = inference_executor.submit(worker_batch_inference, batch_inputs, inf_imgsz, conf_thresh)
-                active_futures[future] = {'start_time': time.time(), 'shms': shm_names}
-                
-                def on_done(fut, s_names=shm_names, c_procs=cam_procs, o_frames=orig_frames):
-                    with pool_lock:
-                        active_futures.pop(fut, None)
-                    for shm in s_names:
-                        cleanup_shared_memory(shm)
-                    
-                    try:
-                        results = fut.result()
-                        for i, (cam_id, dets) in enumerate(results):
-                            c_procs[i].handle_inference_results(o_frames[i], dets)
-                    except concurrent.futures.process.BrokenProcessPool:
-                        print("💥 [SUPERVISOR] BrokenProcessPool exception caught in future!")
-                    except Exception as e:
-                        print(f"❌ [SUPERVISOR] Error in inference future: {e}")
-
-                future.add_done_callback(on_done)
-            except Exception as e:
-                print(f"❌ [SUPERVISOR] Error submitting task: {e}")
-                for shm in shm_names:
+        # Submit task
+        try:
+            inf_imgsz = 320 if cam_procs[0].global_settings.get('low_end_mode', True) else 640
+            conf_thresh = cam_procs[0].confidence_threshold
+            future = inference_executor.submit(worker_batch_inference, batch_inputs, inf_imgsz, conf_thresh)
+            
+            def on_done(fut, s_names=shm_names, c_procs=cam_procs, o_frames=orig_frames):
+                for shm in s_names:
                     cleanup_shared_memory(shm)
+                
+                try:
+                    results = fut.result()
+                    for i, (cam_id, dets) in enumerate(results):
+                        c_procs[i].handle_inference_results(o_frames[i], dets)
+                except Exception as e:
+                    print(f"❌ [SUPERVISOR] Error in inference future: {e}")
+
+            future.add_done_callback(on_done)
+        except Exception as e:
+            print(f"❌ [SUPERVISOR] Error submitting task: {e}")
+            for shm in shm_names:
+                cleanup_shared_memory(shm)
 
 
 def main():
     global stop_processing, plate_logger, cameras_dict, PROCESS_EVERY_NTH_FRAME
     global inference_executor, inference_semaphore
 
-    # CPU Affinity & process pinning (Section 1C)
-    try:
-        import psutil
-        import os
-        p = psutil.Process(os.getpid())
-        num_cores = psutil.cpu_count()
-        if num_cores >= 2:
-            p.cpu_affinity([0])
-            print("📌 [Main] Pinned main process to core 0")
-    except Exception as e:
-        print(f"⚠️ Main process affinity setting failed: {e}")
+
 
     # Load configuration
     config = load_config()
@@ -2611,7 +2255,7 @@ def main():
     status_update_interval = headless_settings.get('status_update_interval', 10)
 
     try:
-        trigger_file = 'reload_trigger.txt'
+        trigger_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'scripts', 'reload_trigger.txt')
         config_mtime = os.path.getmtime(trigger_file) if os.path.exists(trigger_file) else 0
         
         while not stop_processing:

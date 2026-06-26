@@ -22,12 +22,17 @@ def require_superadmin(f):
 @require_superadmin
 def settings():
     if request.method == 'POST':
-        global_settings = {
+        # Load existing config to preserve keys not in the form
+        existing_config = load_config_from_db() or {}
+        
+        global_settings = existing_config.get('global_settings', {})
+        global_settings.update({
             'fps_limit': int(request.form.get('global_fps_limit', 30)),
             'frame_skip': int(request.form.get('global_frame_skip', 2)),
-        }
+        })
         
-        display_settings = {
+        display_settings = existing_config.get('display_settings', {})
+        display_settings.update({
             'headless_mode': request.form.get('display_headless_mode') == 'on',
             'show_fps': request.form.get('display_show_fps') == 'on',
             'show_plate_count': request.form.get('display_show_plate_count') == 'on',
@@ -35,15 +40,16 @@ def settings():
             'window_title': request.form.get('display_window_title', 'Multi-Camera ANPR System'),
             'grid_layout': request.form.get('display_grid_layout', '2x2'),
             'show_camera_names': request.form.get('display_show_camera_names') == 'on'
-        }
+        })
         
-        headless_settings = {
+        headless_settings = existing_config.get('headless_settings', {})
+        headless_settings.update({
             'enabled': request.form.get('headless_enabled') == 'on',
             'log_level': request.form.get('headless_log_level', 'INFO'),
             'save_frames': request.form.get('headless_save_frames') == 'on',
             'frame_save_interval': int(request.form.get('headless_frame_save_interval', 30)),
             'status_update_interval': int(request.form.get('headless_status_update_interval', 10))
-        }
+        })
         
         settings_to_save = {
             'global_settings': global_settings,

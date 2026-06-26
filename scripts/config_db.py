@@ -139,8 +139,10 @@ def load_config_from_db():
                 except (json.JSONDecodeError, TypeError):
                     parsed_val = val
                 
-                if key in config:
-                    config[key] = parsed_val
+                if key in default_settings and isinstance(default_settings[key], dict) and isinstance(parsed_val, dict):
+                    merged_val = default_settings[key].copy()
+                    merged_val.update(parsed_val)
+                    config[key] = merged_val
                 else:
                     config[key] = parsed_val
             
