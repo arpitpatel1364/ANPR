@@ -30,6 +30,12 @@ def safe_float(value, default=0.0):
     except (ValueError, TypeError):
         return default
 
+def safe_confidence(value):
+    val = safe_float(value, 0.8)
+    if val > 1.0:
+        val = val / 100.0
+    return min(1.0, max(0.0, val))
+
 camera_bp = Blueprint('camera', __name__)
 import threading
 import time
@@ -76,7 +82,7 @@ def add_camera():
         'location': request.form.get('location', '').strip(),
         'rtsp_source': request.form.get('rtsp_source', '').strip(),
         'dedup_window': safe_int(request.form.get('dedup_window'), 50),
-        'confidence_threshold': safe_float(request.form.get('confidence_threshold'), 0.8),
+        'confidence_threshold': safe_confidence(request.form.get('confidence_threshold')),
         'enabled': request.form.get('enabled') == 'on',
         'api_enabled': request.form.get('api_enabled') == 'on',
         'api_settings': {
@@ -160,7 +166,7 @@ def edit_camera(camera_id):
         'location': request.form.get('location', '').strip(),
         'rtsp_source': request.form.get('rtsp_source', '').strip(),
         'dedup_window': safe_int(request.form.get('dedup_window'), 50),
-        'confidence_threshold': safe_float(request.form.get('confidence_threshold'), 0.8),
+        'confidence_threshold': safe_confidence(request.form.get('confidence_threshold')),
         'enabled': request.form.get('enabled') == 'on',
         'api_enabled': request.form.get('api_enabled') == 'on',
         'api_settings': {

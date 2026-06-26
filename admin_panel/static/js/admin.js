@@ -1052,7 +1052,7 @@ function refreshRecentDetectionsTable(detections) {
         const plate = d.plate || '-';
         const status = d.verification_status || '-';
         const camera = d.camera || '-';
-        const conf = d.confidence ? parseFloat(d.confidence).toFixed(1) + '%' : '-';
+        const conf = d.confidence ? (parseFloat(d.confidence) * 100).toFixed(1) + '%' : '-';
         const badgeClass = status === 'VERIFIED' ? 'bg-success-gradient' : 'bg-warning-gradient';
         
         const ann = d.image_full_annotated || '';

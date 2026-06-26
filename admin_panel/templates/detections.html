@@ -280,8 +280,8 @@
                                     </span>
                                 </td>
                                 <td>
-                                    <span class="badge badge-modern bg-info">
-                                        {{ "%.1f"|format(detection.Detection_Confidence|float) if detection.Detection_Confidence else '-' }}%
+                                    <span class="badge badge-modern bg-info-gradient">
+                                        {{ "%.1f"|format((detection.Detection_Confidence|float) * 100) if detection.Detection_Confidence else '-' }}%
                                     </span>
                                 </td>
                                 <td>
@@ -536,7 +536,7 @@ function renderDetectionsTable(data, isLoadMore = false) {
         const plate = d.License_Plate || '-';
         const status = d.Verification_Status || '-';
         const access = d.Access_Granted || 'NO';
-        const conf = d.Detection_Confidence ? d.Detection_Confidence + '%' : '-';
+        const conf = d.Detection_Confidence ? (parseFloat(d.Detection_Confidence) * 100).toFixed(1) + '%' : '-';
         const camera = d.Camera_Source || '-';
         const ann = d.Image_Full_Annotated || '';
         const x1 = d.bbox_x1, y1 = d.bbox_y1, x2 = d.bbox_x2, y2 = d.bbox_y2;
@@ -560,7 +560,7 @@ function renderDetectionsTable(data, isLoadMore = false) {
                 <td><span class="fw-bold text-primary">${plate}</span></td>
                 <td><span class="badge badge-modern bg-${statusBg}">${status}</span></td>
                 <td><span class="badge badge-modern bg-${accessBg}">${access}</span></td>
-                <td><span class="badge badge-modern bg-info">${conf}</span></td>
+                <td><span class="badge badge-modern bg-info-gradient">${conf}</span></td>
                 <td><small class="text-muted">${camera}</small></td>
                 <td>
                     <div class="btn-group btn-group-sm">
@@ -778,7 +778,7 @@ function viewDetails(d) {
                 <div class="col-md-6 border-start">
                     <div class="mb-1"><span class="text-muted small">Status:</span><br><span class="badge badge-modern ${statusBadge}">${d.Verification_Status || '-'}</span></div>
                     <div class="mb-1"><span class="text-muted small">Access:</span><br><span class="badge badge-modern ${accessBadge}">${d.Access_Granted || 'NO'}</span></div>
-                    <div><span class="text-muted small">Confidence:</span><br><span class="badge badge-modern bg-info-gradient">${d.Detection_Confidence ? parseFloat(d.Detection_Confidence).toFixed(1) + '%' : '-'}</span></div>
+                    <div><span class="text-muted small">Confidence:</span><br><span class="badge badge-modern bg-info-gradient">${d.Detection_Confidence ? (parseFloat(d.Detection_Confidence) * 100).toFixed(1) + '%' : '-'}</span></div>
                 </div>
             </div>
             <h6 class="mb-3 text-muted"><i class="bi bi-image me-2"></i>Full Annotated Frame (Scroll to zoom, drag to pan)</h6>

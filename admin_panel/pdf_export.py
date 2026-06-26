@@ -78,7 +78,7 @@ def create_pdf_export(detections, output_path, include_images=True):
         # Compact detection details table - 2 columns, 3 rows
         details_data = [
             ['Timestamp:', detection.get('Timestamp', 'N/A'), 'Camera:', detection.get('Camera_Source', 'N/A')],
-            ['Confidence:', f"{detection.get('Detection_Confidence', '0')}%", 'Processing Time:', f"{detection.get('Processing_Time_MS', '0')} ms"],
+            ['Confidence:', f"{float(detection.get('Detection_Confidence', 0))*100:.1f}%", 'Processing Time:', f"{detection.get('Processing_Time_MS', '0')} ms"],
         ]
         
         details_table = Table(details_data, colWidths=[1.2*inch, 2.3*inch, 1.2*inch, 2.3*inch])

@@ -14,7 +14,7 @@ import logging
 # Default database configuration
 DEFAULT_DB_CONFIG = {
     'host': '127.0.0.1',
-    'port': 3306,
+    'port': 3307,
     'user': 'root',
     'password': '',  # Default XAMPP MySQL password (empty)
     'database': 'anpr_system',
@@ -81,7 +81,7 @@ def get_connection_pool() -> Optional[pooling.MySQLConnectionPool]:
                     # Extract pool-specific config
                     pool_config = {
                         'host': db_config.get('host', 'localhost'),
-                        'port': db_config.get('port', 3306),
+                        'port': db_config.get('port', 3307),
                         'user': db_config.get('user', 'root'),
                         'password': db_config.get('password', ''),
                         'database': db_config.get('database', 'anpr_system'),
