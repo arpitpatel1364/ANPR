@@ -29,12 +29,31 @@ def load_headless_mode_from_config():
         cfg = config_db.load_config_from_db()
         if cfg:
             display_cfg = cfg.get("display_settings", {})
-            val = bool(display_cfg.get("headless_mode", True))
-            if not val and not os.environ.get("DISPLAY"):
-                print("⚠️  Config says headless_mode=false, but no display detected")
-                print(">> Falling back to HEADLESS mode (no X11 display available)")
-                return True
-            return val
+            headless_cfg = cfg.get("headless_settings", {})
+            
+            # Prioritize the main Display Settings toggle
+            disp_headless = display_cfg.get("headless_mode", True)
+            
+            if isinstance(disp_headless, str):
+                disp_headless = disp_headless.lower() in ('true', '1', 't', 'yes', 'on')
+                
+            user_wants_headless = bool(disp_headless)
+            
+            # If the user explicitly wants Head Mode (GUI), but no display is attached 
+            # (e.g. started from the web UI background service), we must inject the display 
+            # context so OpenCV doesn't crash!
+            if not user_wants_headless and not os.environ.get("DISPLAY"):
+                os.environ["DISPLAY"] = ":0"
+                if not os.environ.get("XAUTHORITY"):
+                    try:
+                        import pwd
+                        script_uid = os.stat(__file__).st_uid
+                        owner_home = pwd.getpwuid(script_uid).pw_dir
+                        os.environ["XAUTHORITY"] = os.path.join(owner_home, ".Xauthority")
+                    except Exception:
+                        pass
+                        
+            return user_wants_headless
     except Exception as e:
         print(f"!!..Early config load failed ({e}), forcing HEADLESS mode..!!")
     
