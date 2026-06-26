@@ -338,6 +338,10 @@ class DatabaseConnection:
     def __enter__(self):
         self.connection = get_connection()
         if self.connection:
+            try:
+                self.connection.ping(reconnect=True, attempts=3, delay=1)
+            except Error as e:
+                print(f"DatabaseConnection ping failed: {e}")
             self.cursor = self.connection.cursor(dictionary=True)
         return self
     
@@ -355,10 +359,26 @@ class DatabaseConnection:
     def execute(self, query: str, params: Optional[tuple] = None):
         """Execute a query"""
         if self.cursor:
-            if params:
-                self.cursor.execute(query, params)
-            else:
-                self.cursor.execute(query)
+            try:
+                if params:
+                    self.cursor.execute(query, params)
+                else:
+                    self.cursor.execute(query)
+            except Error as e:
+                if e.errno == 2006 or "gone away" in str(e).lower() or "lost connection" in str(e).lower():
+                    try:
+                        print("Database connection lost. Reconnecting...")
+                        self.connection.ping(reconnect=True, attempts=3, delay=1)
+                        self.cursor = self.connection.cursor(dictionary=True)
+                        if params:
+                            self.cursor.execute(query, params)
+                        else:
+                            self.cursor.execute(query)
+                    except Error as retry_e:
+                        print(f"Failed to retry query: {retry_e}")
+                        raise e
+                else:
+                    raise e
             return self.cursor
         return None
     
