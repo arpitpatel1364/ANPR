@@ -1055,12 +1055,22 @@ function refreshRecentDetectionsTable(detections) {
         const conf = d.confidence ? parseFloat(d.confidence).toFixed(1) + '%' : '-';
         const badgeClass = status === 'VERIFIED' ? 'bg-success-gradient' : 'bg-warning-gradient';
         
-        const imgUrl = d.thumbnail_url || d.image_full_annotated;
-        const fullImgUrl = d.image_full_annotated || '';
+        const ann = d.image_full_annotated || '';
+        const x1 = d.bbox_x1;
+        const y1 = d.bbox_y1;
+        const x2 = d.bbox_x2;
+        const y2 = d.bbox_y2;
+        
+        const tsCache = d.timestamp ? new Date(d.timestamp).getTime() : 0;
+        const cacheBustAnn = ann ? `${ann}?t=${tsCache}` : '';
         
         let imgHtml = '<i class="bi bi-image text-muted"></i>';
-        if (imgUrl) {
-            imgHtml = `<img src="${imgUrl}" alt="" loading="lazy" onerror="this.outerHTML='<i class=\\'bi bi-image text-muted\\'></i>'" style="width:70px;height:40px;object-fit:cover;border-radius:6px;cursor:pointer;">`;
+        if (ann && x1 !== undefined && x1 !== null && y1 !== undefined && y1 !== null) {
+            imgHtml = `<div class="dynamic-crop-container shadow-sm" data-src="${cacheBustAnn}" data-x1="${x1}" data-y1="${y1}" data-x2="${x2}" data-y2="${y2}" style="width:70px;height:40px;border-radius:6px;overflow:hidden;position:relative;cursor:pointer;background:#f0f0f0;" onclick="showImagePreview('${cacheBustAnn}', 'Annotated Frame')" title="Click to view full frame">
+                <img src="${cacheBustAnn}" style="position:absolute;visibility:hidden;">
+            </div>`;
+        } else if (ann) {
+            imgHtml = `<img src="${cacheBustAnn}" alt="" onerror="this.outerHTML='<i class=\\'bi bi-image text-muted\\'></i>'" loading="lazy" style="width:70px;height:40px;object-fit:cover;border-radius:6px;cursor:pointer;" onclick="showImagePreview('${cacheBustAnn}', 'Annotated Frame')">`;
         }
         
         tr.innerHTML = `
@@ -1071,15 +1081,6 @@ function refreshRecentDetectionsTable(detections) {
             <td><span class="badge badge-modern badge-info">${conf}</span></td>
             <td>${imgHtml}</td>
         `;
-        
-        const img = tr.querySelector('img');
-        if (img && fullImgUrl) {
-            img.addEventListener('click', () => {
-                if (typeof showImagePreview === 'function') {
-                    showImagePreview(fullImgUrl, 'Annotated Frame');
-                }
-            });
-        }
         
         tbody.prepend(tr);
         

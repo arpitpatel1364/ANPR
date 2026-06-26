@@ -312,12 +312,14 @@
                                     {% set x2 = detection['bbox_x2'] if 'bbox_x2' in detection else None %}
                                     {% set y2 = detection['bbox_y2'] if 'bbox_y2' in detection else None %}
                                     
+                                    {% set t_stamp = loop.index %}
+                                    
                                     {% if ann and x1 is not none and y1 is not none %}
-                                    <div class="dynamic-crop-container shadow-sm" data-src="{{ ann }}" data-x1="{{ x1 }}" data-y1="{{ y1 }}" data-x2="{{ x2 }}" data-y2="{{ y2 }}" style="width:70px;height:40px;border-radius:6px;overflow:hidden;position:relative;cursor:pointer;background:#f0f0f0;" onclick="showImagePreview('{{ ann }}', 'Annotated Frame')" title="Click to view full frame">
-                                        <img src="{{ ann }}" style="position:absolute;visibility:hidden;">
+                                    <div class="dynamic-crop-container shadow-sm" data-src="{{ ann }}?t={{ t_stamp }}" data-x1="{{ x1 }}" data-y1="{{ y1 }}" data-x2="{{ x2 }}" data-y2="{{ y2 }}" style="width:70px;height:40px;border-radius:6px;overflow:hidden;position:relative;cursor:pointer;background:#f0f0f0;" onclick="showImagePreview('{{ ann }}?t={{ t_stamp }}', 'Annotated Frame')" title="Click to view full frame">
+                                        <img src="{{ ann }}?t={{ t_stamp }}" style="position:absolute;visibility:hidden;">
                                     </div>
                                     {% elif ann %}
-                                    <img src="{{ ann }}" alt="" onerror="this.outerHTML='<i class=\\'bi bi-image text-muted\\'></i>'" loading="lazy" style="width:70px;height:40px;object-fit:cover;border-radius:6px;cursor:pointer;" onclick="showImagePreview('{{ ann }}', 'Annotated Frame')">
+                                    <img src="{{ ann }}?t={{ t_stamp }}" alt="" onerror="this.outerHTML='<i class=\\'bi bi-image text-muted\\'></i>'" loading="lazy" style="width:70px;height:40px;object-fit:cover;border-radius:6px;cursor:pointer;" onclick="showImagePreview('{{ ann }}?t={{ t_stamp }}', 'Annotated Frame')">
                                     {% else %}
                                     <i class="bi bi-image text-muted"></i>
                                     {% endif %}
