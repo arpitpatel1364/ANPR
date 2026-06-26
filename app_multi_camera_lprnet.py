@@ -855,7 +855,6 @@ class CameraProcessor:
                             if verification_status == "VERIFIED" and is_logged:
                                 self.update_verified_plate_cooldown(license_plate_text)
 
-                        if is_logged:
                             if verification_status == "VERIFIED":
                                 self.save_verified_plate_image(processed_frame, license_plate_text)
 
@@ -1825,7 +1824,7 @@ def inference_supervisor_loop():
             continue
             
         try:
-            inf_imgsz = 320 if cam_procs[0].global_settings.get('low_end_mode', True) else 640
+            inf_imgsz = 640
             with torch.inference_mode():
                 yolo_results_batch = yolo_model.predict(valid_frames, imgsz=inf_imgsz, verbose=False)
                 
@@ -1931,7 +1930,7 @@ def main():
             csv_file=None,
             allowed_plates_file="allowed_plates.json",
             dedup_window=30,
-            max_confidence_threshold=0.8
+            max_confidence_threshold=0.3
         )
         print("✅ Plate logger initialized (using MySQL database)")
     except Exception as e:
