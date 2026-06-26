@@ -249,19 +249,24 @@ class PlateLogger:
             'clean_plate': clean_plate
         }
     
-    def should_log_detection(self, plate: str, confidence: float) -> tuple[bool, str]:
+    def should_log_detection(self, plate: str, confidence: float, custom_dedup: int | None = None, custom_threshold: float | None = None) -> tuple[bool, str]:
         """
         Determine if a detection should be logged based on deduplication rules
         
         Args:
             plate (str): License plate to check
             confidence (float): Detection confidence score
+            custom_dedup (int): Optional camera-specific deduplication window
+            custom_threshold (float): Optional camera-specific confidence threshold
             
         Returns:
             tuple: (should_log, reason)
         """
         current_time = time.time()
         clean_plate = plate.replace(" ", "").upper()
+        
+        dedup_win = custom_dedup if custom_dedup is not None else self.dedup_window
+        conf_thresh = custom_threshold if custom_threshold is not None else self.max_confidence_threshold
         
         with self.lock:
             # Check if we have a recent detection of this plate
@@ -270,7 +275,7 @@ class PlateLogger:
                 time_diff = current_time - last_time
                 
                 # If within dedup window, don't log unless confidence is significantly higher
-                if time_diff < self.dedup_window:
+                if time_diff < dedup_win:
                     # Only log if confidence is much higher (indicating better detection)
                     if confidence > last_confidence + 0.1:  # 10% improvement threshold
                         # Update with new higher confidence detection and move to end for LRU OrderedDict
@@ -281,11 +286,11 @@ class PlateLogger:
                         # Update count but don't log, and move to end
                         self.recent_detections[clean_plate] = (last_time, last_confidence, count + 1)
                         self.recent_detections.move_to_end(clean_plate)
-                        return False, f"Duplicate within {self.dedup_window}s window (count: {count + 1})"
+                        return False, f"Duplicate within {dedup_win}s window (count: {count + 1})"
             
             # Check confidence threshold
-            if confidence < self.max_confidence_threshold:
-                return False, f"Low confidence ({confidence:.2f} < {self.max_confidence_threshold})"
+            if confidence < conf_thresh:
+                return False, f"Low confidence ({confidence:.2f} < {conf_thresh})"
             
             # New detection or outside dedup window - log it
             self.recent_detections[clean_plate] = (current_time, confidence, 1)
@@ -302,7 +307,7 @@ class PlateLogger:
             old_plates = []
             for plate, (timestamp, confidence, count) in self.recent_detections.items():
                 if current_time - timestamp > self.dedup_window * 2:  # Keep 2x dedup window
-                    old_plates.append(plate)
+                     old_plates.append(plate)
             
             for plate in old_plates:
                 del self.recent_detections[plate]
@@ -317,7 +322,9 @@ class PlateLogger:
                      bbox_x1: int | None = None,
                      bbox_y1: int | None = None,
                      bbox_x2: int | None = None,
-                     bbox_y2: int | None = None):
+                     bbox_y2: int | None = None,
+                     custom_dedup: int | None = None,
+                     custom_threshold: float | None = None):
         """
         Log a license plate detection to CSV with intelligent deduplication
         
@@ -326,10 +333,12 @@ class PlateLogger:
             detection_confidence (float): Confidence score from detection
             processing_time_ms (float): Time taken to process frame
             camera_source (str): Source of the video (webcam, RTSP, etc.)
+            custom_dedup (int): Optional camera-specific deduplication window
+            custom_threshold (float): Optional camera-specific confidence threshold
         """
         try:
             # Check if we should log this detection
-            should_log, reason = self.should_log_detection(plate, detection_confidence)
+            should_log, reason = self.should_log_detection(plate, detection_confidence, custom_dedup, custom_threshold)
             
             # Verify the plate
             verification = self.verify_plate(plate)
