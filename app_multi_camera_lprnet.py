@@ -849,7 +849,9 @@ class CameraProcessor:
                                 bbox_x1=image_urls.get('bbox_x1') if image_urls else None,
                                 bbox_y1=image_urls.get('bbox_y1') if image_urls else None,
                                 bbox_x2=image_urls.get('bbox_x2') if image_urls else None,
-                                bbox_y2=image_urls.get('bbox_y2') if image_urls else None
+                                bbox_y2=image_urls.get('bbox_y2') if image_urls else None,
+                                custom_dedup=self.dedup_window,
+                                custom_threshold=self.confidence_threshold
                             )
 
                             if verification_status == "VERIFIED" and is_logged:
@@ -1662,15 +1664,22 @@ def reload_cameras_from_config(config):
         else:
             # Existing camera - check if config changed
             existing_cam = cameras_dict[cam_id]
-            config_changed = (
+            
+            # Properties requiring thread/connection restart
+            needs_restart = (
                 existing_cam.rtsp_source != new_cam_cfg['rtsp_source'] or
                 existing_cam.enabled != new_cam_cfg['enabled'] or
-                existing_cam.api_enabled != new_cam_cfg['api_enabled'] or
-                existing_cam.confidence_threshold != new_cam_cfg['confidence_threshold']
+                existing_cam.api_enabled != new_cam_cfg['api_enabled']
             )
             
-            if config_changed:
-                print(f"🟡 Reloading modified camera: {existing_cam.name}")
+            # Properties that can be dynamically updated in-place
+            non_disruptive_change = (
+                existing_cam.confidence_threshold != new_cam_cfg['confidence_threshold'] or
+                existing_cam.dedup_window != new_cam_cfg['dedup_window']
+            )
+            
+            if needs_restart:
+                print(f"🟡 Restarting modified camera due to structural changes: {existing_cam.name}")
                 existing_cam.stop_camera()
                 
                 # Update config and restart
@@ -1683,6 +1692,10 @@ def reload_cameras_from_config(config):
                 if existing_cam.enabled:
                     existing_cam.start_camera()
                     print(f"✅ Camera '{existing_cam.name}' restarted with new config")
+            elif non_disruptive_change:
+                print(f"⚡ Dynamically updating settings for camera '{existing_cam.name}' in-place without restarting thread (Threshold: {new_cam_cfg['confidence_threshold']}, Dedup: {new_cam_cfg['dedup_window']}s)")
+                existing_cam.confidence_threshold = new_cam_cfg['confidence_threshold']
+                existing_cam.dedup_window = new_cam_cfg['dedup_window']
 
 
 def setup_logging(headless_settings):
