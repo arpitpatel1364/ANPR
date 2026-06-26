@@ -1,0 +1,754 @@
+diff --git a/app_multi_camera_lprnet.py b/app_multi_camera_lprnet.py
+index b15c767..ce8774c 100755
+--- a/app_multi_camera_lprnet.py
++++ b/app_multi_camera_lprnet.py
+@@ -264,446 +264,15 @@ model = None
+ lprnet_model = None
+ device = 'cpu'
+ 
+-# Global inference structures (multiprocessing model)
+-import concurrent.futures.process
+-from multiprocessing import shared_memory
+-import uuid
+-
+-inference_executor = None
+-spawn_context = None
+-worker_id_counter = None
+-inference_semaphore = None
++# Global inference structures (simplified single-thread model)
++import queue
++from threading import Lock
++
+ global_frame_queue = queue.Queue(maxsize=32)
+ pool_lock = Lock()
+-active_futures = {}  # {future: {'start_time': t, 'shms': [shm_name1, ...]}}
+-INFERENCE_TIMEOUT = 90.0  # Increased to prevent timeouts during heavy model initialization
+ BATCH_SIZE = 4
+-
+-def get_shared_memory(shape, dtype, data):
+-    """Zero-copy memory transfer creation"""
+-    import numpy as np
+-    size = data.nbytes
+-    shm = shared_memory.SharedMemory(create=True, size=size)
+-    shm_arr = np.ndarray(shape, dtype=dtype, buffer=shm.buf)
+-    np.copyto(shm_arr, data)
+-    return shm.name
+-
+-def cleanup_shared_memory(shm_name):
+-    """Safely unlink shared memory"""
+-    try:
+-        shm = shared_memory.SharedMemory(name=shm_name)
+-        shm.close()
+-        shm.unlink()
+-    except Exception:
+-        pass
+-
+-# Worker subprocess globals
+-worker_yolo = None
+-worker_lprnet = None
+-worker_device = 'cpu'
+-
+-
+-
+-
+-def init_worker(yolo_path, lprnet_path, worker_id_counter=None, total_workers=2):
+-    """
+-    Initializer function for the worker processes in the ProcessPoolExecutor.
+-    Loads the YOLO and LPRNet models exactly once per worker process.
+-    Pins workers to specific CPU cores and sets nice level.
+-    """
+-    global worker_yolo, worker_lprnet, worker_device
+-    import sys
+-    import os
+-    
+-    if worker_id_counter is not None:
+-        with worker_id_counter.get_lock():
+-            worker_id = worker_id_counter.value
+-            worker_id_counter.value += 1
+-        os.environ["WORKER_ID"] = str(worker_id)
+-        os.environ["TOTAL_WORKERS"] = str(total_workers)
+-        
+-        import time
+-        time.sleep(worker_id * 0.5) # Fix 5: Worker initialization stagger
+-
+-    project_dir = os.path.dirname(os.path.abspath(__file__))
+-    if project_dir not in sys.path:
+-        sys.path.insert(0, project_dir)
+-        
+-    import torch
+-    import cv2
+-    from ultralytics import YOLO
+-    from LPRNet import LPRNet
+-    
+-    # Allow PyTorch to dynamically utilize all available CPU cores for inference
+-    try:
+-        import psutil
+-        num_cores = psutil.cpu_count(logical=False) or psutil.cpu_count(logical=True) or 4
+-        torch.set_num_threads(num_cores)
+-    except Exception:
+-        pass
+-    
+-    worker_device = 'cpu'
+-    
+-    # Check if CPU supports AVX2 to enable FP16 half precision acceleration
+-    avx2_supported = False
+-    try:
+-        with open('/proc/cpuinfo', 'r') as f:
+-            for line in f:
+-                if 'flags' in line and ('avx2' in line or 'avx' in line):
+-                    avx2_supported = True
+-                    break
+-    except:
+-        pass
+-        
+-    print(f"🔄 Loading YOLOv8 model in worker process {os.getpid()}...")
+-    worker_yolo = YOLO(yolo_path)
+-    worker_yolo.to(worker_device)
+-    
+-    # Running on CPU — FP16 half-precision is not supported on CPU
+-            
+-    print(f"✅ YOLOv8 loaded in worker process {os.getpid()}")
+-    
+-    # Warm up YOLO model (Fix 3C)
+-    try:
+-        import numpy as np
+-        with torch.inference_mode():
+-            worker_yolo.predict(np.zeros((320, 320, 3), dtype=np.uint8), verbose=False)
+-        print(f"✅ YOLOv8 warm-up complete in worker process {os.getpid()}")
+-    except Exception as e:
+-        print(f"⚠️ YOLOv8 warm-up failed: {e}")
+-        
+-    print(f"🔄 Loading LPRNet model in worker process {os.getpid()}...")
+-    worker_lprnet = LPRNet(class_num=37, dropout_rate=0)
+-    worker_lprnet.load_state_dict(torch.load(lprnet_path, map_location=worker_device, weights_only=False))
+-    worker_lprnet.to(worker_device)
+-    worker_lprnet.eval()
+-    
+-    # Running on CPU — FP16 half-precision is not supported on CPU
+-            
+-    print(f"✅ LPRNet loaded in worker process {os.getpid()}")
+-
+-    # Warm up LPRNet model (Fix 3C)
+-    try:
+-        dummy_lpr = torch.zeros(1, 3, 24, 94)
+-        with torch.inference_mode():
+-            worker_lprnet(dummy_lpr)
+-        print(f"✅ LPRNet warm-up complete in worker process {os.getpid()}")
+-    except Exception as e:
+-        print(f"⚠️ LPRNet warm-up failed: {e}")
+-
+-
+-def expand_roi(x1, y1, x2, y2, frame_h, frame_w, margin=0.07):
+-    """
+-    Expand YOLO bounding box by margin% on each side.
+-    Clamps to frame boundaries — never goes out of bounds.
+-
+-    Args:
+-        x1,y1,x2,y2 : original box coords (ints or floats)
+-        frame_h      : frame height (pixels)
+-        frame_w      : frame width  (pixels)
+-        margin       : fractional expansion per side (default 7%)
+-
+-    Returns:
+-        x1,y1,x2,y2 : expanded and clamped coords (ints)
+-    """
+-    w = x2 - x1
+-    h = y2 - y1
+-    pad_x = int(w * margin)
+-    pad_y = int(h * margin)
+-    x1 = max(0,       x1 - pad_x)
+-    y1 = max(0,       y1 - pad_y)
+-    x2 = min(frame_w, x2 + pad_x)
+-    y2 = min(frame_h, y2 + pad_y)
+-    return int(x1), int(y1), int(x2), int(y2)
+-
+-
+-def pad_to_aspect(crop, target_w=94, target_h=24):
+-    """
+-    Resize crop to LPRNet input size without distorting characters.
+-    Scales by height, then pads width with black to reach target_w.
+-    Avoids stretching that makes characters unrecognisable.
+-
+-    Args:
+-        crop     : numpy array (H, W, C) — plate crop from frame
+-        target_w : LPRNet input width  (default 94)
+-        target_h : LPRNet input height (default 24)
+-
+-    Returns:
+-        padded   : numpy array (target_h, target_w, C)
+-    """
+-    h, w = crop.shape[:2]
+-    if h == 0 or w == 0:
+-        return cv2.resize(crop, (target_w, target_h))
+-
+-    # Scale by height, keep aspect ratio
+-    scale = target_h / h
+-    new_w = int(w * scale)
+-    resized = cv2.resize(crop, (new_w, target_h),
+-                         interpolation=cv2.INTER_LINEAR)
+-
+-    if new_w >= target_w:
+-        # Wider than target — just resize to fit (last resort)
+-        return cv2.resize(resized, (target_w, target_h),
+-                          interpolation=cv2.INTER_AREA)
+-
+-    # Pad width symmetrically with black
+-    pad_left  = (target_w - new_w) // 2
+-    pad_right = target_w - new_w - pad_left
+-    padded = cv2.copyMakeBorder(resized,
+-                                0, 0, pad_left, pad_right,
+-                                cv2.BORDER_CONSTANT, value=(0, 0, 0))
+-    return padded
+-
+-
+-def worker_batch_inference(batch_inputs, inference_imgsz, confidence_threshold):
+-    """
+-    Executes inference for a batch of frames in the worker process.
+-    """
+-
+-    try:
+-        global worker_yolo, worker_lprnet, worker_device
+-        import numpy as np
+-        import cv2
+-        import torch
+-        from LPRNet import predict_plate, predict_plates_batch
+-        
+-        results = []
+-        
+-        # 1. Reconstruct all frames and apply ROI crops
+-        preprocessed_inputs = []
+-        frames_for_detection = []
+-        
+-        from multiprocessing import shared_memory
+-        # Fix 4: Safe Inter-Process Communication (frame_fallback)
+-        for camera_id, shm_name, shape, dtype, roi, roi_polygon, frame_fallback in batch_inputs:
+-            try:
+-                frame = None
+-                # Fix 1: SHM Lifecycle Safety
+-                if shm_name:
+-                    try:
+-                        shm = shared_memory.SharedMemory(name=shm_name)
+-                        frame = np.ndarray(shape, dtype=dtype, buffer=shm.buf).copy()
+-                        shm.close()
+-                    except FileNotFoundError:
+-                        pass
+-                    except Exception as e:
+-                        print(f"⚠️ [WORKER] SHM error for {shm_name}: {e}")
+-                        
+-                if frame is None and frame_fallback is not None:
+-                    np_arr = np.frombuffer(frame_fallback, np.uint8)
+-                    frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+-                    
+-                if frame is None:
+-                    preprocessed_inputs.append({
+-                        'camera_id': camera_id, 'frame_for_detection': None, 'roi_offset_x': 0, 'roi_offset_y': 0
+-                    })
+-                    frames_for_detection.append(None)
+-                    continue
+-            
+-                # ROI Extraction in the worker
+-                h_full, w_full, _ = frame.shape
+-                frame_for_detection = frame
+-                roi_offset_x, roi_offset_y = 0, 0
+-                
+-                try:
+-                    if roi_polygon and len(roi_polygon) >= 3:
+-                        poly_np = np.array(roi_polygon, dtype=np.int32)
+-                        x, y, w, h = cv2.boundingRect(poly_np)
+-                        
+-                        x = max(0, min(x, w_full - 1))
+-                        y = max(0, min(y, h_full - 1))
+-                        w = max(1, min(w, w_full - x))
+-                        h = max(1, min(h, h_full - y))
+-                        
+-                        crop = frame[y:y + h, x:x + w]
+-                        mask = np.zeros((h, w), dtype=np.uint8)
+-                        shifted_poly = poly_np - np.array([x, y], dtype=np.int32)
+-                        cv2.fillPoly(mask, [shifted_poly], 255)
+-                        
+-                        frame_for_detection = cv2.bitwise_and(crop, crop, mask=mask)
+-                        roi_offset_x, roi_offset_y = x, y
+-                        
+-                    elif roi:
+-                        # roi is dict or list
+-                        if isinstance(roi, dict):
+-                            x1_roi = roi.get('x1', 0)
+-                            y1_roi = roi.get('y1', 0)
+-                            x2_roi = roi.get('x2', w_full)
+-                            y2_roi = roi.get('y2', h_full)
+-                        else:
+-                            x1_roi, y1_roi, x2_roi, y2_roi = roi
+-                            
+-                        x1_roi = max(0, min(x1_roi, w_full - 1))
+-                        y1_roi = max(0, min(y1_roi, h_full - 1))
+-                        x2_roi = max(0, min(x2_roi, w_full))
+-                        y2_roi = max(0, min(y2_roi, h_full))
+-                        
+-                        if x2_roi > x1_roi and y2_roi > y1_roi:
+-                            frame_for_detection = frame[y1_roi:y2_roi, x1_roi:x2_roi]
+-                            roi_offset_x, roi_offset_y = x1_roi, y1_roi
+-                except Exception as e:
+-                    print(f"⚠️ Error applying ROI in worker: {e}")
+-                    
+-                preprocessed_inputs.append({
+-                    'camera_id': camera_id,
+-                    'frame_for_detection': frame_for_detection,
+-                    'roi_offset_x': roi_offset_x,
+-                    'roi_offset_y': roi_offset_y
+-                })
+-                frames_for_detection.append(frame_for_detection)
+-            except Exception as e:
+-                print(f"❌ Error reconstructing frame for camera {camera_id}: {e}")
+-                preprocessed_inputs.append({
+-                    'camera_id': camera_id,
+-                    'frame_for_detection': None,
+-                    'roi_offset_x': 0,
+-                    'roi_offset_y': 0
+-                })
+-                frames_for_detection.append(None)
+-            
+-        # 2. Run batched YOLOv8 detection
+-        yolo_results_batch = []
+-        valid_frames = [f for f in frames_for_detection if f is not None]
+-        if valid_frames:
+-            try:
+-                with torch.inference_mode():
+-                    yolo_results_batch = worker_yolo.predict(valid_frames, imgsz=inference_imgsz, verbose=False)
+-            except Exception as e:
+-                print(f"⚠️ YOLO batch inference error: {e}")
+-                
+-        # Map back results to corresponding inputs
+-        yolo_result_idx = 0
+-        
+-        # 3. Collect all valid crops across all cameras
+-        all_crops = []
+-        crop_metadata = []
+-        
+-        for idx, input_data in enumerate(preprocessed_inputs):
+-            camera_id = input_data['camera_id']
+-            frame_for_detection = input_data['frame_for_detection']
+-            roi_offset_x = input_data['roi_offset_x']
+-            roi_offset_y = input_data['roi_offset_y']
+-            
+-            if frame_for_detection is None:
+-                continue
+-                
+-            try:
+-                if yolo_result_idx < len(yolo_results_batch):
+-                    yolo_results = yolo_results_batch[yolo_result_idx]
+-                    yolo_result_idx += 1
+-                    
+-                    if yolo_results and yolo_results.boxes is not None:
+-                        for result in yolo_results.boxes:
+-                            x1, y1, x2, y2 = map(int, result.xyxy[0])
+-                            conf = float(result.conf[0]) if result.conf is not None else 0.0
+-                            
+-                            if conf < confidence_threshold:
+-                                continue
+-                                
+-                            h_det, w_det, _ = frame_for_detection.shape
+-                            # Expand ROI
+-                            x1, y1, x2, y2 = expand_roi(x1, y1, x2, y2, h_det, w_det, margin=0.07)
+-                            
+-                            if x2 <= x1 or y2 <= y1:
+-                                continue
+-                                
+-                            cropped_plate = frame_for_detection[y1:y2, x1:x2]
+-                            if cropped_plate.size == 0 or cropped_plate.shape[0] < 10 or cropped_plate.shape[1] < 10:
+-                                continue
+-                                
+-                            # Aspect padding
+-                            cropped_plate = pad_to_aspect(cropped_plate, target_w=94, target_h=24)
+-                            
+-                            if not cropped_plate.flags['C_CONTIGUOUS']:
+-                                cropped_plate = np.ascontiguousarray(cropped_plate)
+-                            if cropped_plate.dtype != np.uint8:
+-                                cropped_plate = cropped_plate.astype(np.uint8)
+-                                
+-                            all_crops.append(cropped_plate)
+-                            crop_metadata.append({
+-                                'camera_id': camera_id,
+-                                'x1': x1, 'y1': y1, 'x2': x2, 'y2': y2,
+-                                'roi_offset_x': roi_offset_x,
+-                                'roi_offset_y': roi_offset_y,
+-                                'conf': conf
+-                            })
+-            except Exception as e:
+-                print(f"❌ Error collecting crops for camera {camera_id}: {e}")
+-
+-        # Initialize results dict
+-        camera_detections = {input_data['camera_id']: [] for input_data in preprocessed_inputs}
+-        
+-        # 4. Run batched LPRNet OCR Prediction
+-        if all_crops:
+-            try:
+-                plate_texts = predict_plates_batch(worker_lprnet, all_crops, worker_device)
+-                for i, text in enumerate(plate_texts):
+-                    meta = crop_metadata[i]
+-                    camera_detections[meta['camera_id']].append({
+-                        'plate_text': text,
+-                        'bbox': (meta['x1'], meta['y1'], meta['x2'], meta['y2']),
+-                        'roi_offset': (meta['roi_offset_x'], meta['roi_offset_y']),
+-                        'confidence': meta['conf']
+-                    })
+-            except Exception as ocr_error:
+-                print(f"⚠️ Batched OCR Error in worker: {ocr_error}")
+-
+-        for input_data in preprocessed_inputs:
+-            cam_id = input_data['camera_id']
+-            results.append((cam_id, camera_detections[cam_id]))
+-                
+-        return results
+-    except Exception as e:
+-        raise e
+-
+-def load_models():
+-    """No-op as models are lazy-loaded within worker processes"""
+-    pass
+-
+-# OCR configurations and confusion mappings (if any)
+-# Removed LETTER_CONFUSIONS and digit_to_letter as per user request to simplify and remove HMM.
+-
+-# Indian number plate regex patterns (supports old, new, and brand new formats)
+-# Old format: XX##XX#### (e.g., MH12AB1234) - 2 letters, 2 digits, 2 letters, 4 digits
+-# New format: XX##XXX#### (e.g., MH12ABC1234) - 2 letters, 2 digits, 3 letters, 4 digits
+-# Brand new format: ##XX #### XX (e.g., 24BH 1234 AB) - 2 digits, 2 letters, 4 digits, 2 letters (with/without spaces)
+-INDIAN_PLATE_REGEX = re.compile(
+-    r'^('
+-    r'[A-Z]{2}[0-9]{2}[A-Z]{2}[0-9]{4}|'  # Old: MH12AB1234
+-    r'[A-Z]{2}[0-9]{2}[A-Z]{3}[0-9]{4}|'  # New: MH12ABC1234
+-    r'[0-9]{2}[A-Z]{2}[0-9]{4}[A-Z]{2}|'  # Brand new (no spaces): 24BH1234AB
+-    r'[0-9]{2}[A-Z]{2}\s+[0-9]{4}\s+[A-Z]{2}'  # Brand new (with spaces): 24BH 1234 AB
+-    r')$'
+-)
+-
+-# Global ThreadPool for async writes to prevent thread bloat
+-api_thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=5)
+-
+-# Async API Event Loop setup
+-api_event_loop = asyncio.new_event_loop()
+-def _run_api_loop(loop):
+-    asyncio.set_event_loop(loop)
+-    loop.run_forever()
+-
+-api_loop_thread = threading.Thread(target=_run_api_loop, args=(api_event_loop,), daemon=True)
+-api_loop_thread.start()
+-
+-# Global processing threads
+-processor_thread = None
+-display_thread = None
+-processor_thread_lock = Lock()
+-
+-# Global variables
+-detected_plates = {}  # Store detected plates with timestamps
+-plate_lock = Lock()  # Thread lock for thread-safe operations
+ stop_processing = False
+-plate_logger = None
+-PROCESS_EVERY_NTH_FRAME = 2
+-
+-# Initialize WebSocket client for real-time communication with admin panel
+-websocket_client = None
+ 
+-# Dictionary-based cameras for O(1) lookup and easy hot reload
+ cameras_dict = {}  # {camera_id: CameraProcessor}
+ 
+ # per-camera throttle at module level
+@@ -823,7 +392,8 @@ class CameraProcessor:
+         self.roi_snapshot_interval = self.headless_settings.get('roi_snapshot_interval', 2)
+         self.roi_snapshot_dir = os.path.join(os.path.dirname(__file__), 'admin_panel', 'static', 'images', 'roi_snapshots')
+         os.makedirs(self.roi_snapshot_dir, exist_ok=True)
+-        self.api_thread_pool = api_thread_pool
++        import concurrent.futures
++        self.api_thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=4)
+         self.save_frames = self.headless_settings.get('save_frames', False)
+ 
+         # ============================================================================
+@@ -1247,9 +817,9 @@ class CameraProcessor:
+         - Submits to global ProcessPoolExecutor when semaphore is free (Section 1.2).
+         - Automatically reconnects indefinitely with exponential backoff on stream loss.
+         """
+-        global stop_processing, inference_executor, inference_semaphore
++        global stop_processing
+         
+-        global stop_processing, inference_executor, inference_semaphore
++        global stop_processing
+         
+         reconnect_delay_base = 5.0
+         reconnect_delay_max = 60.0
+@@ -2059,45 +1629,61 @@ def signal_handler(signum, frame):
+     logging.info("Shutdown signal received. Stopping ANPR system...")
+     stop_processing = True
+ 
+-def rebuild_pool():
+-    """Recreates the pool cleanly using a lightweight ThreadPoolExecutor"""
+-    global inference_executor, spawn_context, worker_id_counter
+-    print("🔄 [SUPERVISOR] Rebuilding ThreadPoolExecutor...")
+-    if inference_executor:
+-        try:
+-            inference_executor.shutdown(wait=False, cancel_futures=True)
+-        except:
+-            pass
+-    
++def expand_roi(x1, y1, x2, y2, frame_h, frame_w, margin=0.07):
++    w, h = x2 - x1, y2 - y1
++    pad_x, pad_y = int(w * margin), int(h * margin)
++    x1, y1 = max(0, x1 - pad_x), max(0, y1 - pad_y)
++    x2, y2 = min(frame_w, x2 + pad_x), min(frame_h, y2 + pad_y)
++    return int(x1), int(y1), int(x2), int(y2)
++
++def pad_to_aspect(crop, target_w=94, target_h=24):
++    import cv2
++    h, w = crop.shape[:2]
++    if h == 0 or w == 0:
++        return cv2.resize(crop, (target_w, target_h))
++    scale = target_h / h
++    new_w = int(w * scale)
++    resized = cv2.resize(crop, (new_w, target_h), interpolation=cv2.INTER_LINEAR)
++    if new_w >= target_w:
++        return cv2.resize(resized, (target_w, target_h), interpolation=cv2.INTER_AREA)
++    pad_left = (target_w - new_w) // 2
++    pad_right = target_w - new_w - pad_left
++    import numpy as np
++    return cv2.copyMakeBorder(resized, 0, 0, pad_left, pad_right, cv2.BORDER_CONSTANT, value=(0, 0, 0))
++
++def inference_supervisor_loop():
++    """Simplified synchronous inference loop for 3-core machine."""
++    import torch
++    import cv2
++    import numpy as np
++    from ultralytics import YOLO
++    from LPRNet import LPRNet, predict_plates_batch
++    import os
++
++    device = 'cpu'
++    print("🔄 Loading YOLO and LPRNet in supervisor thread...")
+     yolo_path = os.path.join(os.path.dirname(__file__), "yolov8_best_ANPR_Vamsi.pt")
+     lprnet_path = os.path.join(os.path.dirname(__file__), "newmodel", "best_lprnet.pth")
+     
+-    with worker_id_counter.get_lock():
+-        worker_id_counter.value = 0
+-        
+-    import concurrent.futures
+-    
+-    # Lightweight single-thread batch inference (saves RAM and removes IPC overhead)
+-    max_workers = 1
+-    
+-    print(f"🔄 [SUPERVISOR] Starting ThreadPoolExecutor with {max_workers} thread(s)...")
+-    inference_executor = concurrent.futures.ThreadPoolExecutor(
+-        max_workers=max_workers,
+-        initializer=init_worker,
+-        initargs=(yolo_path, lprnet_path, worker_id_counter, max_workers)
+-    )
+-    print("✅ [SUPERVISOR] Pool rebuilt successfully.")
++    # Allow PyTorch to use cores properly
++    try:
++        torch.set_num_threads(2)
++    except:
++        pass
++
++    yolo_model = YOLO(yolo_path)
++    yolo_model.to(device)
++
++    lprnet_model = LPRNet(class_num=37, dropout_rate=0)
++    lprnet_model.load_state_dict(torch.load(lprnet_path, map_location=device, weights_only=False))
++    lprnet_model.to(device)
++    lprnet_model.eval()
++    print("✅ Models loaded in supervisor thread.")
+ 
+-def inference_supervisor_loop():
+-    """Simple inference loop without hung worker monitoring and timeouts."""
+-    global inference_executor
+-    
+     while not stop_processing:
+         batch = []
+         try:
+-            # Wait for at least one frame
+             batch.append(global_frame_queue.get(timeout=0.1))
+-            # Drain up to BATCH_SIZE
+             while len(batch) < BATCH_SIZE:
+                 batch.append(global_frame_queue.get_nowait())
+         except queue.Empty:
+@@ -2106,53 +1692,119 @@ def inference_supervisor_loop():
+         if not batch:
+             continue
+ 
+-        batch_inputs = []
+-        shm_names = []
+-        orig_frames = []
++        valid_frames = []
+         cam_procs = []
++        orig_frames = []
++        roi_offsets = []
+ 
+-        import cv2
+         for data in batch:
+-            fr_resized = data['frame_resized']
+-            shm_name = None
++            frame = data['frame_resized']
++            cam_proc = data['camera_processor']
++            roi_polygon = cam_proc.roi_polygon
++            roi = cam_proc.roi
++            
++            h_full, w_full, _ = frame.shape
++            frame_for_detection = frame
++            roi_offset_x, roi_offset_y = 0, 0
++            
+             try:
+-                shm_name = get_shared_memory(fr_resized.shape, fr_resized.dtype, fr_resized)
+-                shm_names.append(shm_name)
+-            except Exception:
+-                pass
++                if roi_polygon and len(roi_polygon) >= 3:
++                    poly_np = np.array(roi_polygon, dtype=np.int32)
++                    x, y, w, h = cv2.boundingRect(poly_np)
++                    x = max(0, min(x, w_full - 1))
++                    y = max(0, min(y, h_full - 1))
++                    w = max(1, min(w, w_full - x))
++                    h = max(1, min(h, h_full - y))
++                    crop = frame[y:y + h, x:x + w]
++                    mask = np.zeros((h, w), dtype=np.uint8)
++                    shifted_poly = poly_np - np.array([x, y], dtype=np.int32)
++                    cv2.fillPoly(mask, [shifted_poly], 255)
++                    frame_for_detection = cv2.bitwise_and(crop, crop, mask=mask)
++                    roi_offset_x, roi_offset_y = x, y
++                elif roi:
++                    if isinstance(roi, dict):
++                        x1_roi, y1_roi, x2_roi, y2_roi = roi.get('x1', 0), roi.get('y1', 0), roi.get('x2', w_full), roi.get('y2', h_full)
++                    else:
++                        x1_roi, y1_roi, x2_roi, y2_roi = roi
++                    x1_roi = max(0, min(x1_roi, w_full - 1))
++                    y1_roi = max(0, min(y1_roi, h_full - 1))
++                    x2_roi = max(0, min(x2_roi, w_full))
++                    y2_roi = max(0, min(y2_roi, h_full))
++                    if x2_roi > x1_roi and y2_roi > y1_roi:
++                        frame_for_detection = frame[y1_roi:y2_roi, x1_roi:x2_roi]
++                        roi_offset_x, roi_offset_y = x1_roi, y1_roi
++            except Exception as e:
++                print(f"⚠️ Error applying ROI: {e}")
+                 
+-            frame_fallback = cv2.imencode('.jpg', fr_resized, [cv2.IMWRITE_JPEG_QUALITY, 85])[1].tobytes()
+-            batch_inputs.append((data['camera_id'], shm_name, fr_resized.shape, fr_resized.dtype, data['camera_processor'].roi, data['camera_processor'].roi_polygon, frame_fallback))
++            valid_frames.append(frame_for_detection)
++            cam_procs.append(cam_proc)
+             orig_frames.append(data['frame_original'])
+-            cam_procs.append(data['camera_processor'])
+-
+-        # Submit task
++            roi_offsets.append((roi_offset_x, roi_offset_y))
++            
++        if not valid_frames:
++            continue
++            
+         try:
+             inf_imgsz = 320 if cam_procs[0].global_settings.get('low_end_mode', True) else 640
+-            conf_thresh = cam_procs[0].confidence_threshold
+-            future = inference_executor.submit(worker_batch_inference, batch_inputs, inf_imgsz, conf_thresh)
++            with torch.inference_mode():
++                yolo_results_batch = yolo_model.predict(valid_frames, imgsz=inf_imgsz, verbose=False)
++                
++            all_crops = []
++            crop_metadata = []
+             
+-            def on_done(fut, s_names=shm_names, c_procs=cam_procs, o_frames=orig_frames):
+-                for shm in s_names:
+-                    cleanup_shared_memory(shm)
++            for idx, yolo_results in enumerate(yolo_results_batch):
++                conf_thresh = cam_procs[idx].confidence_threshold
++                if yolo_results and yolo_results.boxes is not None:
++                    for result in yolo_results.boxes:
++                        x1, y1, x2, y2 = map(int, result.xyxy[0])
++                        conf = float(result.conf[0]) if result.conf is not None else 0.0
++                        if conf < conf_thresh:
++                            continue
++                            
++                        # Adjust back to resized frame coords
++                        ro_x, ro_y = roi_offsets[idx]
++                        x1 += ro_x
++                        y1 += ro_y
++                        x2 += ro_x
++                        y2 += ro_y
++                        
++                        # Expand bbox slightly
++                        frame_h, frame_w = valid_frames[idx].shape[:2]
++                        x1, y1, x2, y2 = expand_roi(x1, y1, x2, y2, frame_h, frame_w)
++                        
++                        plate_crop = batch[idx]['frame_resized'][y1:y2, x1:x2]
++                        
++                        if plate_crop.size > 0:
++                            padded = pad_to_aspect(plate_crop)
++                            all_crops.append(padded)
++                            crop_metadata.append({
++                                'batch_idx': idx,
++                                'bbox': (x1, y1, x2, y2),
++                                'conf': conf
++                            })
++                            
++            if all_crops:
++                plate_texts = predict_plates_batch(lprnet_model, all_crops, device)
+                 
+-                try:
+-                    results = fut.result()
+-                    for i, (cam_id, dets) in enumerate(results):
+-                        c_procs[i].handle_inference_results(o_frames[i], dets)
+-                except Exception as e:
+-                    print(f"❌ [SUPERVISOR] Error in inference future: {e}")
+-
+-            future.add_done_callback(on_done)
++                camera_results = {i: [] for i in range(len(batch))}
++                for meta, text in zip(crop_metadata, plate_texts):
++                    b_idx = meta['batch_idx']
++                    camera_results[b_idx].append({
++                        'bbox': meta['bbox'],
++                        'text': text,
++                        'conf': meta['conf']
++                    })
++                    
++                for i, cam_proc in enumerate(cam_procs):
++                    if camera_results[i]:
++                        cam_proc.handle_inference_results(orig_frames[i], camera_results[i])
++                        
+         except Exception as e:
+-            print(f"❌ [SUPERVISOR] Error submitting task: {e}")
+-            for shm in shm_names:
+-                cleanup_shared_memory(shm)
+-
++            print(f"❌ Error in supervisor loop: {e}")
+ 
+ def main():
+     global stop_processing, plate_logger, cameras_dict, PROCESS_EVERY_NTH_FRAME
+-    global inference_executor, inference_semaphore
++    
+ 
+ 
+ 
+@@ -2208,17 +1860,8 @@ def main():
+         print("⚠️ Real-time features will be disabled")
+         websocket_client = None
+ 
+-    # Initialize multiprocessing Pool and Supervisor Thread
++    # Initialize Inference Supervisor Thread
+     import threading
+-    import multiprocessing
+-    global spawn_context, worker_id_counter
+-    
+-    print("🚀 Initializing ProcessPoolExecutor with dynamic workers (spawn context)...")
+-    spawn_context = multiprocessing.get_context("spawn")
+-    worker_id_counter = spawn_context.Value('i', 0)
+-    
+-    rebuild_pool()
+-    
+     supervisor_thread = threading.Thread(target=inference_supervisor_loop, daemon=True)
+     supervisor_thread.start()
+     print("🛡️  Inference Supervisor started.")
+@@ -2334,10 +1977,7 @@ def main():
+                 else:
+                     print(f"❌ Error stopping camera {camera.name}: {e}")
+ 
+-        # Shutdown multiprocessing executor gracefully (Section 1.1 / 1.2)
+-        if inference_executor:
+-            print("🛑 Shutting down multiprocessing inference executor...")
+-            inference_executor.shutdown(wait=True)
++
+ 
+         # Close display window
+         cv2.destroyAllWindows()
