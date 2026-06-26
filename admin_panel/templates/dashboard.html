@@ -300,8 +300,8 @@
                                     <small>{{ detection.Camera_Source or '-' }}</small>
                                 </td>
                                 <td>
-                                    <span class="badge badge-modern badge-info">
-                                        {{ "%.1f"|format(detection.Detection_Confidence|float) if detection.Detection_Confidence else '-' }}%
+                                    <span class="badge badge-modern bg-info-gradient">
+                                        {{ "%.1f"|format((detection.Detection_Confidence|float) * 100) if detection.Detection_Confidence else '-' }}%
                                     </span>
                                 </td>
                                 <td>

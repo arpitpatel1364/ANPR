@@ -43,13 +43,45 @@ def load_headless_mode_from_config():
             # (e.g. started from the web UI background service), we must inject the display 
             # context so OpenCV doesn't crash!
             if not user_wants_headless and not os.environ.get("DISPLAY"):
-                os.environ["DISPLAY"] = ":0"
+                try:
+                    import subprocess
+                    script_uid = str(os.stat(__file__).st_uid)
+                    
+                    # Try to find an active X11/Wayland session for the user
+                    pgrep_cmd = ["pgrep", "-u", script_uid, "-n", "gnome-shell"]
+                    pid_res = subprocess.run(pgrep_cmd, capture_output=True, text=True)
+                    
+                    if pid_res.returncode == 0 and pid_res.stdout.strip():
+                        pid = pid_res.stdout.strip()
+                        env_file = f"/proc/{pid}/environ"
+                        
+                        if os.path.exists(env_file):
+                            with open(env_file, 'rb') as f:
+                                env_data = f.read().split(b'\0')
+                                
+                            for item in env_data:
+                                if item.startswith(b'DISPLAY='):
+                                    os.environ['DISPLAY'] = item.split(b'=', 1)[1].decode('utf-8')
+                                elif item.startswith(b'XAUTHORITY='):
+                                    os.environ['XAUTHORITY'] = item.split(b'=', 1)[1].decode('utf-8')
+                                    
+                except Exception as e:
+                    print(f"⚠️ Could not auto-detect DISPLAY: {e}")
+
+                # Fallbacks if detection failed
+                if not os.environ.get("DISPLAY"):
+                    os.environ["DISPLAY"] = ":1"
                 if not os.environ.get("XAUTHORITY"):
                     try:
                         import pwd
                         script_uid = os.stat(__file__).st_uid
-                        owner_home = pwd.getpwuid(script_uid).pw_dir
-                        os.environ["XAUTHORITY"] = os.path.join(owner_home, ".Xauthority")
+                        uid_str = str(script_uid)
+                        fallback_auth = f"/run/user/{uid_str}/gdm/Xauthority"
+                        if os.path.exists(fallback_auth):
+                            os.environ["XAUTHORITY"] = fallback_auth
+                        else:
+                            owner_home = pwd.getpwuid(script_uid).pw_dir
+                            os.environ["XAUTHORITY"] = os.path.join(owner_home, ".Xauthority")
                     except Exception:
                         pass
                         
@@ -297,12 +329,8 @@ cameras_dict = {}  # {camera_id: CameraProcessor}
 import re
 # Indian number plate regex patterns
 INDIAN_PLATE_REGEX = re.compile(
-    r'^('
-    r'[A-Z]{2}[0-9]{2}[A-Z]{2}[0-9]{4}|'  # Old: MH12AB1234
-    r'[A-Z]{2}[0-9]{2}[A-Z]{3}[0-9]{4}|'  # New: MH12ABC1234
-    r'[0-9]{2}[A-Z]{2}[0-9]{4}[A-Z]{2}|'  # Brand new (no spaces): 24BH1234AB
-    r'[0-9]{2}[A-Z]{2}\s+[0-9]{4}\s+[A-Z]{2}'  # Brand new (with spaces): 24BH 1234 AB
-    r')$'
+    r'^[A-Z]{2}[0-9]{2}[A-Z]{1,3}[0-9]{1,4}$'
+    r'|^[0-9]{2}BH[0-9]{4}[A-Z]{1,2}$'
 )
 
 # Global ThreadPool for async writes to prevent thread bloat
@@ -731,10 +759,14 @@ class CameraProcessor:
             processed_frame = original_frame.copy()
             detected_texts = []
             
+            h_orig, w_orig = original_frame.shape[:2]
+            scale_factor = 1.0
+            if w_orig > 640:
+                scale_factor = w_orig / 640.0
+            
             for det in detections:
                 license_plate_text = det['plate_text']
                 x1, y1, x2, y2 = det['bbox']
-                roi_offset_x, roi_offset_y = det['roi_offset']
                 confidence = det['confidence']
                 
                 # Check valid Indian plate format (Section 3.1)
@@ -742,15 +774,6 @@ class CameraProcessor:
                     if logging.getLogger().isEnabledFor(logging.DEBUG):
                         logging.debug(f"[{self.name}] Invalid plate format (not Indian), skipping: {license_plate_text}")
                     continue
-                
-                # Feed detection into PlateTracker for majority voting
-                voted_plate = self.plate_tracker.update([x1, y1, x2, y2], license_plate_text, confidence)
-                if voted_plate is None:
-                    # Still accumulating votes, skip this frame
-                    continue
-                
-                # Use majority-voted plate number
-                license_plate_text = voted_plate
                 
                 if license_plate_text and license_plate_text != "No license plate detected":
                     processing_time = (time.time() - start_time) * 1000
@@ -780,10 +803,10 @@ class CameraProcessor:
                             box_color = (0, 0, 255)
                             text_color = (0, 0, 255)
 
-                        global_x1 = x1 + roi_offset_x
-                        global_y1 = y1 + roi_offset_y
-                        global_x2 = x2 + roi_offset_x
-                        global_y2 = y2 + roi_offset_y
+                        global_x1 = int(x1 * scale_factor)
+                        global_y1 = int(y1 * scale_factor)
+                        global_x2 = int(x2 * scale_factor)
+                        global_y2 = int(y2 * scale_factor)
 
                         annotated_frame = processed_frame.copy()
                         cv2.rectangle(annotated_frame, (global_x1, global_y1), (global_x2, global_y2), box_color, 2)
@@ -1811,11 +1834,16 @@ def inference_supervisor_loop():
             
             for idx, yolo_results in enumerate(yolo_results_batch):
                 conf_thresh = cam_procs[idx].confidence_threshold
-                if yolo_results and yolo_results.boxes is not None:
+                if yolo_results and yolo_results.boxes is not None and len(yolo_results.boxes) > 0:
+                    print(f"[{cam_procs[idx].name}] YOLO found {len(yolo_results.boxes)} boxes! (thresh: {conf_thresh})")
                     for result in yolo_results.boxes:
                         x1, y1, x2, y2 = map(int, result.xyxy[0])
                         conf = float(result.conf[0]) if result.conf is not None else 0.0
+                        cls_id = int(result.cls[0]) if result.cls is not None else 0
+                        print(f"   -> Box [class {cls_id}]: conf={conf:.3f}")
+                        
                         if conf < conf_thresh:
+                            print(f"      -> Rejected! Confidence {conf:.3f} < {conf_thresh}")
                             continue
                             
                         # Adjust back to resized frame coords
@@ -1825,11 +1853,12 @@ def inference_supervisor_loop():
                         x2 += ro_x
                         y2 += ro_y
                         
-                        # Expand bbox slightly
-                        frame_h, frame_w = valid_frames[idx].shape[:2]
+                        # Expand bbox slightly using the full frame dimensions
+                        frame_h, frame_w = batch[idx]['frame_resized'].shape[:2]
                         x1, y1, x2, y2 = expand_roi(x1, y1, x2, y2, frame_h, frame_w)
                         
                         plate_crop = batch[idx]['frame_resized'][y1:y2, x1:x2]
+                        print(f"      -> Accepted! Crop size: {plate_crop.shape}")
                         
                         if plate_crop.size > 0:
                             padded = pad_to_aspect(plate_crop)
@@ -1837,7 +1866,8 @@ def inference_supervisor_loop():
                             crop_metadata.append({
                                 'batch_idx': idx,
                                 'bbox': (x1, y1, x2, y2),
-                                'conf': conf
+                                'conf': conf,
+                                'roi_offset': (ro_x, ro_y)
                             })
                             
             if all_crops:
@@ -1848,8 +1878,9 @@ def inference_supervisor_loop():
                     b_idx = meta['batch_idx']
                     camera_results[b_idx].append({
                         'bbox': meta['bbox'],
-                        'text': text,
-                        'conf': meta['conf']
+                        'plate_text': text,
+                        'confidence': meta['conf'],
+                        'roi_offset': meta['roi_offset']
                     })
                     
                 for i, cam_proc in enumerate(cam_procs):
