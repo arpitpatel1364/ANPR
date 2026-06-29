@@ -939,8 +939,6 @@ class CameraProcessor:
         """
         global stop_processing
         
-        global stop_processing
-        
         reconnect_delay_base = 5.0
         reconnect_delay_max = 60.0
         delay = reconnect_delay_base
@@ -1047,10 +1045,8 @@ class CameraProcessor:
                         
                     # Update thread-safe display property (Section 1.4)
                     self.current_processed_frame = frame_copy
-                    
-                    pass
                         
-                    # Apply Conditional CLAHE + Unsharp Mask ONLY if motion detected
+                    # Apply Conditional CLAHE + Unsharp Mask when frame is dark
                     frame_resized = enhance_frame_if_dark(
                         frame_resized,
                         dark_threshold = 80,
@@ -1062,7 +1058,6 @@ class CameraProcessor:
                     )
                     
                     # Save ROI snapshot periodically
-                    import psutil
                     current_time = time.time()
                     if self.roi_snapshot_interval > 0:
                         if current_time - self.last_roi_snapshot_time > self.roi_snapshot_interval:
@@ -1073,14 +1068,13 @@ class CameraProcessor:
                             except Exception:
                                 pass
                                 
-                    # Fixed FPS Throttling (10 FPS)
+                    # Dispatch directly to central supervisor queue at 10 FPS
                     target_interval = 0.10  # 10 FPS
-                    
+                    current_time = time.time()
                     if current_time - self.last_put_time > target_interval:
                         self.last_put_time = current_time
-                        # Enforce strict queue size limits and drop on full (Section 2.2)
                         try:
-                            self.frame_queue.put_nowait({
+                            global_frame_queue.put_nowait({
                                 'frame_resized': frame_resized,
                                 'frame_original': frame_copy,
                                 'camera_id': self.camera_id,
@@ -1089,18 +1083,7 @@ class CameraProcessor:
                             })
                         except queue.Full:
                             if logging.getLogger().isEnabledFor(logging.DEBUG):
-                                logging.debug(f"[{self.name}] Frame queue full (maxsize=2), dropping incoming frame.")
-                                
-                    # Dispatch task to central supervisor queue
-                    if not self.frame_queue.empty():
-                        try:
-                            frame_data = self.frame_queue.get_nowait()
-                            global_frame_queue.put_nowait(frame_data)
-                        except queue.Empty:
-                            pass
-                        except queue.Full:
-                            # Drop if global queue is backed up
-                            pass
+                                logging.debug(f"[{self.name}] Global frame queue full, dropping frame.")
                 else:
                     if logging.getLogger().isEnabledFor(logging.DEBUG):
                         logging.debug(f"[{self.name}] Skipping corrupted frame (H.264 decode error)")
@@ -2024,8 +2007,9 @@ def main():
 
     if not any(cam.enabled for cam in cameras_list):
         print("❌ No cameras could be started. Exiting.")
-        # Shutdown executor
-        inference_executor.shutdown(wait=False)
+        # Shutdown executor if it was created
+        if 'inference_executor' in globals() and inference_executor is not None:
+            inference_executor.shutdown(wait=False)
         return
 
     # visual grid render or headless loop configuration
