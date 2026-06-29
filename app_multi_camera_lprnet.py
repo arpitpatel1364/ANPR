@@ -423,7 +423,7 @@ class CameraProcessor:
 
         # Multi-frame plate tracker
         self.plate_tracker = PlateTracker(
-            min_votes=3,          # require 3 consistent reads before emitting
+            min_votes=2,          # 2 consistent reads = faster response (~100ms at 10FPS)
             max_gap_secs=2.0,     # track expires after 2s of no detection
             iou_threshold=0.35,   # IoU threshold for box matching
             emit_cooldown=3.0     # soft lock: suppress re-emit for 3s
@@ -859,7 +859,9 @@ class CameraProcessor:
 
                         processed_frame = annotated_frame
 
-                        # Async Image Saving (Section 7.2)
+                        # Always save frame image and push to admin panel UI
+                        # regardless of DB dedup — so the detection page updates
+                        # on every confirmed plate, not just first-time DB writes.
                         image_urls = self.save_detection_images(
                             full_frame_annotated=annotated_frame,
                             plate_text=license_plate_text,
@@ -870,14 +872,34 @@ class CameraProcessor:
                             bbox_y2=global_y2
                         )
 
-                        # Check cooldown for verified plates (1 second)
+                        self.send_detection_to_admin_panel(
+                            plate=license_plate_text,
+                            confidence=confidence,
+                            processing_time=processing_time,
+                            verification_status=verification_status,
+                            image_urls=image_urls
+                        )
+
+                        # --- DB write + Barrier API: gated by dedup / cooldown ---
+                        #
+                        # Dedup strategy differs by verification status:
+                        #   VERIFIED   → use full camera dedup_window (e.g. 30-50s)
+                        #                prevents barrier from opening repeatedly
+                        #                for the same vehicle pass.
+                        #   NOT_VERIFIED → use short 5s dedup so every pass of an
+                        #                  unknown vehicle creates a fresh DB log entry
+                        #                  and appears on the detection page.
+                        if verification_status == "VERIFIED":
+                            effective_dedup = self.dedup_window
+                        else:
+                            effective_dedup = 5  # seconds — log unknown plates frequently
+
                         should_log = True
                         if verification_status == "VERIFIED" and self.is_verified_plate_on_cooldown(license_plate_text):
                             should_log = False
                             if not self.headless_mode:
                                 print(f"⏳ [{self.name}] Verified plate {license_plate_text} on 1s cooldown, skipping log")
 
-                        is_logged = False
                         if should_log:
                             is_logged = plate_logger.log_detection(
                                 plate=license_plate_text,
@@ -889,7 +911,7 @@ class CameraProcessor:
                                 bbox_y1=image_urls.get('bbox_y1') if image_urls else None,
                                 bbox_x2=image_urls.get('bbox_x2') if image_urls else None,
                                 bbox_y2=image_urls.get('bbox_y2') if image_urls else None,
-                                custom_dedup=self.dedup_window,
+                                custom_dedup=effective_dedup,
                                 custom_threshold=self.confidence_threshold
                             )
 
@@ -899,23 +921,15 @@ class CameraProcessor:
                             if verification_status == "VERIFIED":
                                 self.save_verified_plate_image(processed_frame, license_plate_text)
 
-                            self.send_detection_to_admin_panel(
-                                plate=license_plate_text,
-                                confidence=confidence,
-                                processing_time=processing_time,
-                                verification_status=verification_status,
-                                image_urls=image_urls
-                            )
-
                             if verification_status == "VERIFIED" and self.api_enabled:
                                 self.trigger_api_call(license_plate_text, verification_status)
-                            else:
+                                if not self.headless_mode:
+                                    print(f"🔓 [{self.name}] Barrier triggered for VERIFIED plate: {license_plate_text}")
+                            elif not self.headless_mode:
                                 if not self.api_enabled:
-                                    if not self.headless_mode:
-                                        print(f"🚫 [{self.name}] API disabled for this camera - plate: {license_plate_text}")
+                                    print(f"🚫 [{self.name}] API disabled for this camera - plate: {license_plate_text}")
                                 else:
-                                    if not self.headless_mode:
-                                        print(f"🚫 [{self.name}] API call skipped for plate: {license_plate_text} (Status: {verification_status}) - Not verified")
+                                    print(f"🚫 [{self.name}] API call skipped for plate: {license_plate_text} (Status: {verification_status}) - Not verified")
                                     
             self.current_processed_frame = processed_frame
             if detected_texts:
