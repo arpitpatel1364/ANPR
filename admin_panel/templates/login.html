@@ -14,35 +14,62 @@
     <link href="{{ url_for('static', filename='css/login.css') }}" rel="stylesheet">
 </head>
 <body class="login-body">
+    <!-- Background decorative elements -->
+    <div class="decor-ring ring-1"></div>
+    <div class="decor-ring ring-2"></div>
+    
+    <!-- Watermark Plate Number -->
+    <div class="plate-watermark">GJ 01 AB 1234</div>
+
     <div class="container-fluid vh-100">
         <div class="row h-100">
             <!-- Left Side - Branding -->
             <div class="col-lg-6 d-none d-lg-flex login-left">
+                
                 <div class="login-content">
-                    <div>
-                        <i class="bi bi-camera-video login-icon"></i>
-                        <h1 class="login-title">ANPR Admin Panel</h1>
-                        <p class="login-subtitle">Advanced Number Plate Recognition System</p>
-                        <div class="login-features">
-                            <div class="feature-item">
-                                <i class="bi bi-check-circle-fill me-3"></i>
-                                Multi-Camera Support
+                    <div class="login-content-wrapper">
+                        <!-- Logo Badge -->
+                        <div class="logo-badge">
+                            <span class="logo-text"><span class="logo-bold">ANPR</span> <span class="logo-light">ADMIN</span></span>
+                        </div>
+                        
+                        <!-- Title & Subtitle -->
+                        <h1 class="login-title">Automatic Number<br><span class="title-highlight">Plate Recognition</span></h1>
+                        <p class="login-subtitle">Intelligent access control and real-time vehicle monitoring for your facility.</p>
+                        
+                        <!-- Feature Cards -->
+                        <div class="login-feature-cards">
+                            <div class="feature-card">
+                                <div class="feature-card-icon">
+                                    <i class="bi bi-grid"></i>
+                                </div>
+                                <span class="feature-card-text">Multi-camera support</span>
                             </div>
-                            <div class="feature-item">
-                                <i class="bi bi-check-circle-fill me-3"></i>
-                                Real-time Detection
+                            
+                            <div class="feature-card">
+                                <div class="feature-card-icon">
+                                    <i class="bi bi-bullseye"></i>
+                                </div>
+                                <span class="feature-card-text">Real-time detection</span>
                             </div>
-                            <div class="feature-item">
-                                <i class="bi bi-check-circle-fill me-3"></i>
-                                Access Control Integration
+                            
+                            <div class="feature-card">
+                                <div class="feature-card-icon">
+                                    <i class="bi bi-shield-check"></i>
+                                </div>
+                                <span class="feature-card-text">Access control integration</span>
                             </div>
-                            <div class="feature-item">
-                                <i class="bi bi-check-circle-fill me-3"></i>
-                                Comprehensive Analytics
+                            
+                            <div class="feature-card">
+                                <div class="feature-card-icon">
+                                    <i class="bi bi-bar-chart-line"></i>
+                                </div>
+                                <span class="feature-card-text">Comprehensive analytics</span>
                             </div>
                         </div>
                     </div>
                 </div>
+                
             </div>
             
             <!-- Right Side - Login Form -->
@@ -50,7 +77,6 @@
                 <div class="login-form-container">
                     <div class="login-form">
                         <div class="text-center mb-4">
-                            <i class="bi bi-shield-lock login-form-icon"></i>
                             <h2 class="login-form-title">Welcome Back</h2>
                             <p class="text-muted">Sign in to access the admin panel</p>
                         </div>
