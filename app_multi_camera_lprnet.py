@@ -132,10 +132,11 @@ class PlateTracker:
                         an existing track
     """
 
-    def __init__(self, min_votes=1, max_gap_secs=2.0, iou_threshold=0.35):
+    def __init__(self, min_votes=1, max_gap_secs=2.0, iou_threshold=0.35, emit_cooldown=3.0):
         self.min_votes     = min_votes
         self.max_gap_secs  = max_gap_secs
         self.iou_threshold = iou_threshold
+        self.emit_cooldown = emit_cooldown  # seconds before a track can re-emit
         self._tracks       = {}   # track_id -> track dict
         self._next_id      = 0
 
@@ -182,7 +183,7 @@ class PlateTracker:
         Returns:
             result     : str or None
                          str  — voted plate string when confident enough
-                         None — still accumulating, not ready yet
+                         None — still accumulating or already emitted
         """
         self._expire_stale()
 
@@ -198,21 +199,42 @@ class PlateTracker:
                 'votes'    : Counter(),
                 'last_seen': now,
                 'emitted'  : False,
+                'emit_time': None,   # timestamp of last successful emit
             }
 
         track = self._tracks[tid]
-        track['box']       = box          # update to latest position
         track['last_seen'] = now
+        track['box']       = box          # update to latest position
+
+        # --- Soft Lock ---------------------------------------------------
+        # Instead of permanently killing a track after first emission, use
+        # a time-based cooldown window:
+        #   • Within cooldown  → suppress silently (no spam)
+        #   • Past cooldown    → reset the track so the same vehicle can be
+        #                        re-detected / corrected if still in frame
+        # -----------------------------------------------------------------
+        if track['emitted']:
+            if now - track['emit_time'] < self.emit_cooldown:
+                return None   # still within cooldown — suppress
+            else:
+                # Cooldown expired — vehicle may still be present or needs
+                # correction. Reset votes and emitted flag for a fresh read.
+                track['emitted']  = False
+                track['emit_time'] = None
+                track['votes']    = Counter()
+
         track['votes'][plate_str] += 1
 
-        # Emit when we have enough votes and haven't emitted yet
+        # Check if we have enough votes to make a decision
         total_votes = sum(track['votes'].values())
-        if total_votes >= self.min_votes and not track['emitted']:
-            track['emitted'] = True
+        if total_votes >= self.min_votes:
             best, count = track['votes'].most_common(1)[0]
             # Only emit if majority agrees (>50% of votes)
             if count > total_votes * 0.5:
+                track['emitted']  = True
+                track['emit_time'] = now   # record when we emitted
                 return best
+            # Majority not yet reached — keep accumulating more frames
 
         return None   # still accumulating
 
@@ -401,9 +423,10 @@ class CameraProcessor:
 
         # Multi-frame plate tracker
         self.plate_tracker = PlateTracker(
-            min_votes=1,
-            max_gap_secs=2.0,
-            iou_threshold=0.35
+            min_votes=3,          # require 3 consistent reads before emitting
+            max_gap_secs=2.0,     # track expires after 2s of no detection
+            iou_threshold=0.35,   # IoU threshold for box matching
+            emit_cooldown=3.0     # soft lock: suppress re-emit for 3s
         )
 
         self.headless_mode = headless_mode
@@ -765,9 +788,25 @@ class CameraProcessor:
                 scale_factor = w_orig / 640.0
             
             for det in detections:
-                license_plate_text = det['plate_text']
+                license_plate_text_raw = det['plate_text']
                 x1, y1, x2, y2 = det['bbox']
                 confidence = det['confidence']
+
+                # ── Voting Gate ──────────────────────────────────────────────
+                # Feed raw LPRNet text into the multi-frame tracker.
+                # update() returns:
+                #   str  → majority vote confirmed, proceed with this plate
+                #   None → still accumulating reads, skip this frame silently
+                # This prevents a single noisy/wrong OCR frame from triggering
+                # logs, DB writes, API calls, or admin-panel updates.
+                license_plate_text = self.plate_tracker.update(
+                    box=(x1, y1, x2, y2),
+                    plate_str=license_plate_text_raw,
+                    confidence=confidence
+                )
+                if license_plate_text is None:
+                    continue   # not enough consensus yet — wait for more frames
+                # ─────────────────────────────────────────────────────────────
                 
                 # Check valid Indian plate format (Section 3.1)
                 if not self.is_valid_indian_plate(license_plate_text):
