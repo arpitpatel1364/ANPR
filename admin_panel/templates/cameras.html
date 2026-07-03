@@ -1025,6 +1025,7 @@
         const canvas = document.getElementById('roiCanvas');
         const ctx = canvas.getContext('2d');
         const img = new Image();
+        let imgLoaded = false;
 
         let imageScale = 1;
         let originalWidth = 0;
@@ -1161,6 +1162,7 @@
         });
 
         img.onload = function () {
+            imgLoaded = true;
             originalWidth = img.width;
             originalHeight = img.height;
 
@@ -1198,33 +1200,36 @@
             img.src = `/static/images/roi_snapshots/${cameraId}.jpg?t=${Date.now()}`;
 
             // Add error handler in case snapshot doesn't exist
-            let retryCount = 0;
             img.onerror = function () {
-                if (retryCount === 0) {
-                    console.error('Snapshot not found. Retrying...');
-                    retryCount++;
-                    setTimeout(() => {
-                        img.src = `/static/images/roi_snapshots/${cameraId}.jpg?t=${Date.now()}`;
-                    }, 2000);
-                } else {
-                    console.error('Failed to load camera frame for ROI.');
-                    // Set a fallback canvas size so the UI doesn't completely break
-                    originalWidth = 1280;
-                    originalHeight = 720;
-                    const screenWidth = window.innerWidth;
-                    const maxWidth = screenWidth < 1200 ? Math.max(300, screenWidth - (screenWidth < 576 ? 32 : 64) - 48) : 1100;
-                    const maxHeight = screenWidth < 768 ? 350 : 620;
-                    imageScale = Math.min(maxWidth / originalWidth, maxHeight / originalHeight, 1);
-                    canvas.width = Math.round(originalWidth * imageScale);
-                    canvas.height = Math.round(originalHeight * imageScale);
-                    
-                    ctx.fillStyle = '#1e293b';
-                    ctx.fillRect(0, 0, canvas.width, canvas.height);
-                    ctx.fillStyle = '#ef4444';
-                    ctx.font = '16px Arial';
-                    ctx.textAlign = 'center';
-                    ctx.fillText('Camera Offline: Could not fetch frame', canvas.width / 2, canvas.height / 2);
+                console.error('Failed to load camera frame for ROI. Drawing on grid map fallback.');
+                imgLoaded = false;
+                
+                // Set fallback dimensions
+                originalWidth = 1280;
+                originalHeight = 720;
+                const screenWidth = window.innerWidth;
+                const maxWidth = screenWidth < 1200 ? Math.max(300, screenWidth - (screenWidth < 576 ? 32 : 64) - 48) : 1100;
+                const maxHeight = screenWidth < 768 ? 350 : 620;
+                imageScale = Math.min(maxWidth / originalWidth, maxHeight / originalHeight, 1);
+                canvas.width = Math.round(originalWidth * imageScale);
+                canvas.height = Math.round(originalHeight * imageScale);
+                
+                // Initialize coordinates
+                if (initialType === 'polygon' && existingRoiPolygon && Array.isArray(existingRoiPolygon) && existingRoiPolygon.length > 0) {
+                    points = existingRoiPolygon.map(p => ({
+                        x: (p.x !== undefined ? p.x : p[0]) * imageScale,
+                        y: (p.y !== undefined ? p.y : p[1]) * imageScale
+                    }));
+                } else if (initialType === 'box' && existingRoiBox && existingRoiBox.x1 !== undefined) {
+                    boxRect = {
+                        x: existingRoiBox.x1 * imageScale,
+                        y: existingRoiBox.y1 * imageScale,
+                        w: (existingRoiBox.x2 - existingRoiBox.x1) * imageScale,
+                        h: (existingRoiBox.y2 - existingRoiBox.y1) * imageScale
+                    };
                 }
+                
+                redrawCanvas();
             };
         }
 
@@ -1697,7 +1702,36 @@
 
         function redrawCanvas(mx = -1, my = -1) {
             ctx.clearRect(0, 0, canvas.width, canvas.height);
-            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            if (imgLoaded) {
+                ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            } else {
+                // Draw offline/no-image fallback background
+                ctx.fillStyle = '#0f172a';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                // Draw grid lines
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
+                ctx.lineWidth = 1;
+                // horizontal
+                for (let i = 1; i < 6; i++) {
+                    ctx.beginPath();
+                    ctx.moveTo(0, canvas.height * (i / 6));
+                    ctx.lineTo(canvas.width, canvas.height * (i / 6));
+                    ctx.stroke();
+                }
+                // vertical
+                for (let i = 1; i < 10; i++) {
+                    ctx.beginPath();
+                    ctx.moveTo(canvas.width * (i / 10), 0);
+                    ctx.lineTo(canvas.width * (i / 10), canvas.height);
+                    ctx.stroke();
+                }
+                
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+                ctx.font = '16px monospace';
+                ctx.textAlign = 'center';
+                ctx.fillText('CAMERA OFFLINE: DRAWING ROI ON GRID MAP', canvas.width / 2, canvas.height / 2);
+            }
 
             // Dynamically update delete button on redraw based on ROI content presence
             updateToolbarUI();

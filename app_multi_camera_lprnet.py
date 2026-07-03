@@ -497,7 +497,8 @@ class CameraProcessor:
 
         # ROI fallback snapshot settings
         self.last_roi_snapshot_time = 0
-        self.roi_snapshot_interval = self.headless_settings.get('roi_snapshot_interval', 2)
+        self.roi_snapshot_interval = self.headless_settings.get('roi_snapshot_interval', 0)
+        self.snapshot_saved_for_session = False
         self.roi_snapshot_dir = os.path.join(os.path.dirname(__file__), 'admin_panel', 'static', 'images', 'roi_snapshots')
         os.makedirs(self.roi_snapshot_dir, exist_ok=True)
         import concurrent.futures
@@ -973,6 +974,7 @@ class CameraProcessor:
                     except Exception:
                         pass
                     self.cap = None
+                    self.snapshot_saved_for_session = False
 
                 if self.headless_mode:
                     logging.warning(f"[{self.name}] Camera source not open. Connecting in {delay}s...")
@@ -1041,6 +1043,7 @@ class CameraProcessor:
                         except Exception:
                             pass
                         self.cap = None
+                        self.snapshot_saved_for_session = False
                     delay = reconnect_delay_base
                     continue
 
@@ -1048,6 +1051,15 @@ class CameraProcessor:
 
                 if self._validate_frame(frame, "captured_frame"):
                     frame_copy = frame.copy()
+                    
+                    # Save initial snapshot once per connection session
+                    if not self.snapshot_saved_for_session:
+                        self.snapshot_saved_for_session = True
+                        try:
+                            snapshot_path = os.path.join(self.roi_snapshot_dir, f"{self.camera_id}.jpg")
+                            self.api_thread_pool.submit(cv2.imwrite, snapshot_path, frame_copy)
+                        except Exception:
+                            pass
                     
                     # Scale inference frame down to max 640px wide (Section 2.1)
                     h_orig, w_orig = frame_copy.shape[:2]
@@ -1071,14 +1083,14 @@ class CameraProcessor:
                         enable_sharpen = True
                     )
                     
-                    # Save ROI snapshot periodically
+                    # Save ROI snapshot periodically if enabled
                     current_time = time.time()
                     if self.roi_snapshot_interval > 0:
                         if current_time - self.last_roi_snapshot_time > self.roi_snapshot_interval:
                             self.last_roi_snapshot_time = current_time
                             try:
                                 snapshot_path = os.path.join(self.roi_snapshot_dir, f"{self.camera_id}.jpg")
-                                cv2.imwrite(snapshot_path, frame_copy)
+                                self.api_thread_pool.submit(cv2.imwrite, snapshot_path, frame_copy)
                             except Exception:
                                 pass
                                 
@@ -1883,15 +1895,15 @@ def inference_supervisor_loop():
             for idx, yolo_results in enumerate(yolo_results_batch):
                 conf_thresh = cam_procs[idx].confidence_threshold
                 if yolo_results and yolo_results.boxes is not None and len(yolo_results.boxes) > 0:
-                    print(f"[{cam_procs[idx].name}] YOLO found {len(yolo_results.boxes)} boxes! (thresh: {conf_thresh})")
+                    logging.debug(f"[{cam_procs[idx].name}] YOLO found {len(yolo_results.boxes)} boxes! (thresh: {conf_thresh})")
                     for result in yolo_results.boxes:
                         x1, y1, x2, y2 = map(int, result.xyxy[0])
                         conf = float(result.conf[0]) if result.conf is not None else 0.0
                         cls_id = int(result.cls[0]) if result.cls is not None else 0
-                        print(f"   -> Box [class {cls_id}]: conf={conf:.3f}")
+                        logging.debug(f"   -> Box [class {cls_id}]: conf={conf:.3f}")
                         
                         if conf < conf_thresh:
-                            print(f"      -> Rejected! Confidence {conf:.3f} < {conf_thresh}")
+                            logging.debug(f"      -> Rejected! Confidence {conf:.3f} < {conf_thresh}")
                             continue
                             
                         # Adjust back to resized frame coords
@@ -1906,7 +1918,7 @@ def inference_supervisor_loop():
                         x1, y1, x2, y2 = expand_roi(x1, y1, x2, y2, frame_h, frame_w)
                         
                         plate_crop = batch[idx]['frame_resized'][y1:y2, x1:x2]
-                        print(f"      -> Accepted! Crop size: {plate_crop.shape}")
+                        logging.debug(f"      -> Accepted! Crop size: {plate_crop.shape}")
                         
                         if plate_crop.size > 0:
                             padded = pad_to_aspect(plate_crop)
@@ -1936,7 +1948,7 @@ def inference_supervisor_loop():
                         cam_proc.handle_inference_results(orig_frames[i], camera_results[i])
                         
         except Exception as e:
-            print(f"❌ Error in supervisor loop: {e}")
+            logging.error(f"❌ Error in supervisor loop: {e}", exc_info=True)
 
 def main():
     global stop_processing, plate_logger, cameras_dict, PROCESS_EVERY_NTH_FRAME
