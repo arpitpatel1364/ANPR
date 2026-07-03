@@ -147,13 +147,13 @@ def ctc_beam_search(probs, beam_width=3, chars=None, return_beams=False):
 
 import re as _re
 
-# Comprehensive Indian plate regex — covers old, new, and BH formats
-# Old format : GJ01AB1234
-# New format : MH12ABC1234
-# BH format  : 24BH1234AB
+# ─── Indian Plate Regex ────────────────────────────────────────────────────────
+# Relaxed to allow:
+#   - Standard : 2 letters | 1-2 digits | 0-3 letters | 1-4 digits
+#   - BH series: 2 digits | BH | 4 digits | 1-2 letters
 INDIAN_PLATE_REGEX = _re.compile(
-    r'^[A-Z]{2}[0-9]{2}[A-Z]{1,3}[0-9]{1,4}$'   # old + new
-    r'|^[0-9]{2}BH[0-9]{4}[A-Z]{1,2}$'            # BH series
+    r'^[A-Z]{2}[0-9]{1,2}[A-Z]{0,3}[0-9]{1,4}$'   # standard + new
+    r'|^[0-9]{2}BH[0-9]{4}[A-Z]{1,2}$'              # BH series
 )
 
 def apply_format_filter(beam_results, regex=INDIAN_PLATE_REGEX):
