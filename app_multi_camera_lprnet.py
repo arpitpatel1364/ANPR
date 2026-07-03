@@ -225,18 +225,28 @@ class PlateTracker:
 
         track['votes'][plate_str] += 1
 
-        # Check if we have enough votes to make a decision
-        total_votes = sum(track['votes'].values())
-        if total_votes >= self.min_votes:
-            best, count = track['votes'].most_common(1)[0]
-            # Only emit if majority agrees (>50% of votes)
-            if count > total_votes * 0.5:
-                track['emitted']  = True
-                track['emit_time'] = now   # record when we emitted
-                return best
-            # Majority not yet reached — keep accumulating more frames
+        # ── Consensus Voting ──────────────────────────────────────────────────
+        # Emit a result when the top candidate has:
+        #   1. Reached min_votes (default 2) reads — so a single noisy frame
+        #      cannot trigger a result.
+        #   2. A clear lead over the second-best candidate — so scattered noise
+        #      frames that inflate total votes don't block a genuine detection.
+        #
+        # Example: votes = {"MH12AB1234": 3, "MH12AB123": 1}
+        #   → top=3, second=1  → 3 > 1 → emit "MH12AB1234" ✓
+        # Example: votes = {"MH12AB1234": 2, "MH12AB1230": 2}
+        #   → top=2, second=2  → tied → keep accumulating ✗
+        # ─────────────────────────────────────────────────────────────────────
+        top_candidates = track['votes'].most_common(2)
+        best, top_count = top_candidates[0]
+        second_count = top_candidates[1][1] if len(top_candidates) > 1 else 0
 
-        return None   # still accumulating
+        if top_count >= self.min_votes and top_count > second_count:
+            track['emitted']   = True
+            track['emit_time'] = now
+            return best
+
+
 
     def flush(self):
         """
@@ -349,11 +359,78 @@ stop_processing = False
 cameras_dict = {}  # {camera_id: CameraProcessor}
 
 import re
-# Indian number plate regex patterns
+
+# ─── Indian Plate Regex ────────────────────────────────────────────────────────
+# Relaxed to allow:
+#   - Standard : 2 letters | 1-2 digits | 0-3 letters | 1-4 digits
+#                e.g. MH12AB1234, DL3C1234, MH12A1234
+#   - BH series: 2 digits | BH | 4 digits | 1-2 letters
+#                e.g. 24BH1234AB
 INDIAN_PLATE_REGEX = re.compile(
-    r'^[A-Z]{2}[0-9]{2}[A-Z]{1,3}[0-9]{1,4}$'
+    r'^[A-Z]{2}[0-9]{1,2}[A-Z]{0,3}[0-9]{1,4}$'
     r'|^[0-9]{2}BH[0-9]{4}[A-Z]{1,2}$'
 )
+
+def correct_indian_plate(text: str) -> str:
+    """
+    Apply minimal, balanced OCR correction to a plate string.
+    Only corrects the most common substitutions (O <-> 0, I|L <-> 1)
+    in the positions where they are semantically expected.
+
+    For standard plates (SSRRXXX####):
+        - State code (2 chars)   → must be letters : fix 0->O, 1->I
+        - RTO digits (1-2 chars) → must be digits  : fix O->0, I->1, L->1
+        - Series letters (0-3)   → left untouched (don't risk false corrections)
+        - Number digits (1-4)    → must be digits  : fix O->0, I->1, L->1
+
+    For BH plates (##BH####XY):
+        - Year digits (2 chars)  → must be digits  : fix O->0, I->1, L->1
+        - Suffix letters (1-2)   → must be letters : fix 0->O, 1->I
+    """
+    if not text:
+        return text
+
+    s = text.upper().replace(" ", "")
+
+    # ── BH Series ────────────────────────────────────────────────────────────
+    is_bh = (len(s) >= 8 and s[2:4] == 'BH' and s[:2].isdigit())
+    if is_bh:
+        prefix = s[:2].replace('O', '0').replace('I', '1').replace('L', '1')
+        middle = s[2:]  # BH + 4 digits + suffix
+        if len(middle) > 6:
+            suffix = middle[6:].replace('0', 'O').replace('1', 'I')
+            middle = middle[:6] + suffix
+        return prefix + middle
+
+    # ── Standard Plate ───────────────────────────────────────────────────────
+    # Step 1: State code — first 2 chars must be letters
+    state = s[:2].replace('0', 'O').replace('1', 'I') if len(s) >= 2 else s
+    rest  = s[2:]
+
+    # Step 2: RTO digits — next 1-2 chars must be digits
+    rto = ''
+    rto_end = 0
+    for i, ch in enumerate(rest):
+        if i >= 2:
+            break
+        if ch.isdigit() or ch in ('O', 'I', 'L'):
+            rto += ch.replace('O', '0').replace('I', '1').replace('L', '1')
+            rto_end = i + 1
+        else:
+            break
+    middle_and_number = rest[rto_end:]
+
+    # Step 3: Trailing number block — walk from end, fix O/I/L -> digits
+    split_idx = len(middle_and_number)
+    for i in range(len(middle_and_number) - 1, -1, -1):
+        if middle_and_number[i].isdigit() or middle_and_number[i] in ('O', 'I', 'L'):
+            split_idx = i
+        else:
+            break
+    series = middle_and_number[:split_idx]  # series letters — left untouched
+    number = middle_and_number[split_idx:].replace('O', '0').replace('I', '1').replace('L', '1')
+
+    return state + rto + series + number
 
 # Global ThreadPool for async writes to prevent thread bloat
 api_thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=5)
@@ -525,16 +602,14 @@ class CameraProcessor:
         """Validate if detected plate matches Indian number plate format"""
         if not plate_text or plate_text == "No license plate detected":
             return False
-        
+
         cleaned_text = re.sub(r'\s+', '', plate_text.upper())
-        
-        if INDIAN_PLATE_REGEX.match(cleaned_text):
-            return True
-        
-        if INDIAN_PLATE_REGEX.match(plate_text.upper()):
-            return True
-        
-        return False
+
+        # Minimum meaningful plate length guard (e.g. DL3A1 = 5 chars)
+        if len(cleaned_text) < 5:
+            return False
+
+        return bool(INDIAN_PLATE_REGEX.match(cleaned_text))
 
     def is_verified_plate_on_cooldown(self, plate_text: str) -> bool:
         """Check if a verified plate is within cooldown period (1 second)"""
@@ -796,10 +871,8 @@ class CameraProcessor:
                 # ── Voting Gate ──────────────────────────────────────────────
                 # Feed raw LPRNet text into the multi-frame tracker.
                 # update() returns:
-                #   str  → majority vote confirmed, proceed with this plate
-                #   None → still accumulating reads, skip this frame silently
-                # This prevents a single noisy/wrong OCR frame from triggering
-                # logs, DB writes, API calls, or admin-panel updates.
+                #   str  → voted plate string, proceed
+                #   None → still accumulating reads, skip silently
                 license_plate_text = self.plate_tracker.update(
                     box=(x1, y1, x2, y2),
                     plate_str=license_plate_text_raw,
@@ -808,11 +881,24 @@ class CameraProcessor:
                 if license_plate_text is None:
                     continue   # not enough consensus yet — wait for more frames
                 # ─────────────────────────────────────────────────────────────
-                
+
+                # ── OCR Correction Gate ───────────────────────────────────────
+                # Apply minimal balanced correction (O/0, I/L/1) in expected
+                # positional slots before the format check.  This rescues plates
+                # that are structurally correct but have one or two character
+                # confusions, without introducing false positives.
+                corrected = correct_indian_plate(license_plate_text)
+                if corrected != license_plate_text:
+                    logging.debug(
+                        f"[{self.name}] OCR correction: '{license_plate_text}' → '{corrected}'"
+                    )
+                    license_plate_text = corrected
+                # ─────────────────────────────────────────────────────────────
+
                 # Check valid Indian plate format (Section 3.1)
                 if not self.is_valid_indian_plate(license_plate_text):
                     if logging.getLogger().isEnabledFor(logging.DEBUG):
-                        logging.debug(f"[{self.name}] Invalid plate format (not Indian), skipping: {license_plate_text}")
+                        logging.debug(f"[{self.name}] Invalid plate format, skipping: {license_plate_text}")
                     continue
                 
                 if license_plate_text and license_plate_text != "No license plate detected":

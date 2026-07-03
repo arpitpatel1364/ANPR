@@ -156,7 +156,7 @@ def load_config_from_db():
                     "location": cam['location'],
                     "rtsp_source": int(cam['rtsp_source']) if str(cam['rtsp_source']).isdigit() else cam['rtsp_source'],
                     "dedup_window": cam['dedup_window'],
-                    "confidence_threshold": float(cam['confidence_threshold']) if cam['confidence_threshold'] else 0.8,
+                    "confidence_threshold": float(cam['confidence_threshold']) if cam['confidence_threshold'] is not None else 0.8,
                     "enabled": bool(cam['enabled']),
                     "api_enabled": bool(cam['api_enabled'])
                 }
