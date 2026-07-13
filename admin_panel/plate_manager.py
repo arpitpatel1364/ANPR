@@ -49,15 +49,14 @@ def reload_plates_in_anpr():
 def save_allowed_plates(plates_list):
     """Save/merge allowed plates to MySQL database without wiping existing ones."""
     try:
-        with DatabaseConnection() as db:
-            for plate in plates_list:
-                clean_plate = plate.strip().upper()
-                if clean_plate:
-                    db.execute(
-                        "INSERT INTO allowed_plates (license_plate) VALUES (%s) "
-                        "ON DUPLICATE KEY UPDATE license_plate = license_plate",
-                        (clean_plate,)
-                    )
+        params_list = [(plate.strip().upper(),) for plate in plates_list if plate.strip()]
+        if params_list:
+            with DatabaseConnection() as db:
+                db.cursor.executemany(
+                    "INSERT INTO allowed_plates (license_plate) VALUES (%s) "
+                    "ON DUPLICATE KEY UPDATE license_plate = license_plate",
+                    params_list
+                )
         return True
     except Exception as e:
         flash(f'Error saving allowed plates: {str(e)}', 'error')
@@ -201,6 +200,7 @@ def edit_plate():
     """Edit plate"""
     old_plate = request.form.get('old_plate', '').strip().upper()
     new_plate = request.form.get('new_plate', '').strip().upper()
+    description = request.form.get('description', '').strip()
     
     if not old_plate or not new_plate:
         flash('Both old and new plate numbers are required!', 'error')
@@ -219,7 +219,10 @@ def edit_plate():
                 flash(f'Plate {new_plate} is blacklisted! Cannot update to this plate.', 'error')
                 return redirect(url_for('plate.plates'))
                 
-            db.execute("UPDATE allowed_plates SET license_plate = %s WHERE license_plate = %s", (new_plate, old_plate))
+            db.execute(
+                "UPDATE allowed_plates SET license_plate = %s, description = %s WHERE license_plate = %s",
+                (new_plate, description or None, old_plate)
+            )
             if db.cursor.rowcount > 0:
                 flash(f'Plate {old_plate} updated to {new_plate} successfully!', 'success')
                 broadcast_reload_plates()
@@ -304,17 +307,30 @@ def bulk_add_plates():
             
             # Insert new plates
             if new_plates:
-                success_count = 0
+                params_list = []
                 failed_plates = []
                 for plate in new_plates:
+                    if len(plate) > 20:
+                        failed_plates.append((plate, "value too long"))
+                    else:
+                        params_list.append((plate,))
+                
+                success_count = 0
+                if params_list:
                     try:
-                        if len(plate) > 20:
-                            failed_plates.append((plate, "value too long"))
-                            continue
-                        db.execute("INSERT INTO allowed_plates (license_plate) VALUES (%s) ON DUPLICATE KEY UPDATE license_plate = license_plate", (plate,))
-                        success_count += 1
+                        db.cursor.executemany(
+                            "INSERT INTO allowed_plates (license_plate) VALUES (%s) ON DUPLICATE KEY UPDATE license_plate = license_plate",
+                            params_list
+                        )
+                        success_count = len(params_list)
                     except Exception as db_err:
-                        failed_plates.append((plate, str(db_err)))
+                        # Fallback to single-insert in case of database constraints/failures
+                        for (plate,) in params_list:
+                            try:
+                                db.execute("INSERT INTO allowed_plates (license_plate) VALUES (%s) ON DUPLICATE KEY UPDATE license_plate = license_plate", (plate,))
+                                success_count += 1
+                            except Exception as single_err:
+                                failed_plates.append((plate, str(single_err)))
                 
                 if success_count > 0:
                     flash(f'Added {success_count} new plates successfully!', 'success')

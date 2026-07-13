@@ -83,10 +83,15 @@ def after_request(response):
         "frame-src 'self'; object-src 'none'; base-uri 'self';"
     )
     
-    # Disable caching for UI updates
-    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate, public, max-age=0'
-    response.headers['Pragma'] = 'no-cache'
-    response.headers['Expires'] = '0'
+    # Disable caching for dynamic HTML and JSON content, but allow static files to cache
+    content_type = response.headers.get('Content-Type', '')
+    if any(t in content_type for t in ['text/html', 'application/json', 'text/xml']):
+        response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate, max-age=0'
+        response.headers['Pragma'] = 'no-cache'
+        response.headers['Expires'] = '0'
+    else:
+        # Static files: cache for 1 day
+        response.headers['Cache-Control'] = 'public, max-age=86400'
     
     return response
 
@@ -211,22 +216,21 @@ def dashboard():
     try:
         # Get statistics from database
         with DatabaseConnection() as db:
-            # Total detections
-            db.execute("SELECT COUNT(*) as count FROM detections")
-            result = db.fetchone()
-            total_detections = result['count'] if result else 0
-            
-            # Verified detections
-            db.execute("SELECT COUNT(*) as count FROM detections WHERE verification_status = 'VERIFIED'")
-            result = db.fetchone()
-            verified_detections = result['count'] if result else 0
-            
-            # Unverified detections
-            db.execute("SELECT COUNT(*) as count FROM detections WHERE verification_status = 'NOT_VERIFIED'")
-            result = db.fetchone()
-            unverified_detections = result['count'] if result else 0
+            # Get statistics from database in a single query
+            db.execute("""
+                SELECT 
+                    COUNT(*) as total_detections,
+                    SUM(CASE WHEN verification_status = 'VERIFIED' THEN 1 ELSE 0 END) as verified_detections,
+                    SUM(CASE WHEN verification_status = 'NOT_VERIFIED' THEN 1 ELSE 0 END) as unverified_detections
+                FROM detections
+            """)
+            stats_result = db.fetchone()
+            total_detections = stats_result['total_detections'] if stats_result and stats_result['total_detections'] is not None else 0
+            verified_detections = int(stats_result['verified_detections']) if stats_result and stats_result['verified_detections'] is not None else 0
+            unverified_detections = int(stats_result['unverified_detections']) if stats_result and stats_result['unverified_detections'] is not None else 0
             
             verification_rate = (verified_detections / total_detections * 100) if total_detections > 0 else 0
+
             
             # Recent detections (newest first, last 10)
             db.execute("""

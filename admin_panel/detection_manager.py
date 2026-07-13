@@ -14,45 +14,7 @@ from auth import admin_required, require_auth
 
 detection_bp = Blueprint('detection', __name__)
 
-def load_detections():
-    """Load detection data from MySQL database"""
-    try:
-        with DatabaseConnection() as db:
-            query = """
-                SELECT id, timestamp, license_plate, verification_status, access_granted,
-                       detection_confidence, processing_time_ms, camera_source,
-                       detection_count, log_reason, image_full_annotated, bbox_x1, bbox_y1, bbox_x2, bbox_y2
-                FROM detections
-                ORDER BY timestamp DESC
-            """
-            db.execute(query)
-            rows = db.fetchall()
-            
-            # Convert to list of dicts compatible with pandas DataFrame format
-            detections = []
-            for row in rows:
-                detections.append({
-                    'id': row['id'],
-                    'Timestamp': row['timestamp'].strftime('%Y-%m-%d %H:%M:%S.%f')[:-3] if row['timestamp'] else '',
-                    'License_Plate': row['license_plate'],
-                    'Verification_Status': row['verification_status'],
-                    'Access_Granted': row['access_granted'],
-                    'Detection_Confidence': f"{row['detection_confidence']:.3f}",
-                    'Processing_Time_MS': f"{row['processing_time_ms']:.2f}",
-                    'Camera_Source': row['camera_source'],
-                    'Detection_Count': row['detection_count'],
-                    'Log_Reason': row['log_reason'] or '',
-                    'Image_Full_Annotated': row['image_full_annotated'] or '',
-                    'bbox_x1': row['bbox_x1'],
-                    'bbox_y1': row['bbox_y1'],
-                    'bbox_x2': row['bbox_x2'],
-                    'bbox_y2': row['bbox_y2']
-                })
-            
-            return detections
-    except Exception as e:
-        flash(f'Error loading detections: {str(e)}', 'error')
-        return []
+
 
 @detection_bp.route('/detections')
 def detections():

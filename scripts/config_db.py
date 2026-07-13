@@ -211,12 +211,16 @@ def save_setting_to_db(key, value):
 def save_settings_to_db(settings_dict):
     """Save multiple settings to the system_settings table"""
     try:
-        with DatabaseConnection() as db:
-            for key, value in settings_dict.items():
-                val_str = json.dumps(value) if isinstance(value, (dict, list)) else str(value)
-                db.execute(
+        params_list = []
+        for key, value in settings_dict.items():
+            val_str = json.dumps(value) if isinstance(value, (dict, list)) else str(value)
+            params_list.append((key, val_str))
+        
+        if params_list:
+            with DatabaseConnection() as db:
+                db.cursor.executemany(
                     "INSERT INTO system_settings (setting_key, setting_value) VALUES (%s, %s) ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)",
-                    (key, val_str)
+                    params_list
                 )
         trigger_hot_reload()
         return True

@@ -253,13 +253,15 @@ def test_rtsp_with_ffprobe(rtsp_url: str, timeout: int = 5) -> Dict[str, Any]:
             'error': str(e)
         }
 
-def get_camera_status(camera: Dict[str, Any], use_ffprobe: bool = False) -> Dict[str, Any]:
+def get_camera_status(camera: Dict[str, Any], use_ffprobe: bool = False, deep_check: bool = False) -> Dict[str, Any]:
     """
-    Get comprehensive camera status including connection test
+    Get camera status. Uses lightweight TCP/ICMP checks by default to save CPU/RAM/network.
+    Uses full OpenCV/ffprobe decode connection test if deep_check=True.
     
     Args:
         camera: Camera configuration dict
         use_ffprobe: Use ffprobe instead of OpenCV (if available)
+        deep_check: Set to True for full frame decode validation
     
     Returns:
         dict with status information
@@ -267,22 +269,64 @@ def get_camera_status(camera: Dict[str, Any], use_ffprobe: bool = False) -> Dict
     rtsp_url = camera.get('rtsp_source', '')
     enabled = camera.get('enabled', False)
     
-    # Test connection
-    if use_ffprobe:
-        connection_result = test_rtsp_with_ffprobe(rtsp_url)
-        # If ffprobe not available, fall back to OpenCV
-        if connection_result['connected'] is None:
-            connection_result = test_rtsp_connection(rtsp_url)
-    else:
-        connection_result = test_rtsp_connection(rtsp_url)
-        # If OpenCV fails and ffprobe might be available, try it
-        if not connection_result['connected'] and connection_result.get('error'):
-            try:
-                ffprobe_result = test_rtsp_with_ffprobe(rtsp_url)
-                if ffprobe_result['connected'] is not None:
-                    connection_result = ffprobe_result
-            except:
-                pass
+    connection_result = {
+        'connected': False,
+        'latency_ms': None,
+        'read_time_ms': None,
+        'frame_size': None,
+        'error': 'Host unreachable'
+    }
+    
+    if enabled:
+        if deep_check:
+            # Full OpenCV/ffprobe connection check
+            if use_ffprobe:
+                connection_result = test_rtsp_with_ffprobe(rtsp_url)
+                if connection_result['connected'] is None:
+                    connection_result = test_rtsp_connection(rtsp_url)
+            else:
+                connection_result = test_rtsp_connection(rtsp_url)
+                if not connection_result['connected'] and connection_result.get('error'):
+                    try:
+                        ffprobe_result = test_rtsp_with_ffprobe(rtsp_url)
+                        if ffprobe_result['connected'] is not None:
+                            connection_result = ffprobe_result
+                    except:
+                        pass
+        else:
+            # Lightweight TCP/ICMP ping check (default)
+            is_local = False
+            dev_index = None
+            if isinstance(rtsp_url, int):
+                is_local = True
+                dev_index = rtsp_url
+            elif isinstance(rtsp_url, str) and rtsp_url.isdigit():
+                is_local = True
+                dev_index = int(rtsp_url)
+                
+            if is_local and dev_index is not None:
+                dev_path = f"/dev/video{dev_index}"
+                if os.path.exists(dev_path):
+                    connection_result = {
+                        'connected': True,
+                        'latency_ms': 0.1,
+                        'read_time_ms': 0,
+                        'frame_size': "Local Device",
+                        'error': None
+                    }
+            else:
+                host, port = extract_host_port(rtsp_url)
+                if host:
+                    ping_start = time.time()
+                    if test_tcp_ping(host, port) or test_icmp_ping(host):
+                        latency = (time.time() - ping_start) * 1000
+                        connection_result = {
+                            'connected': True,
+                            'latency_ms': round(latency, 2),
+                            'read_time_ms': 0,
+                            'frame_size': "Ping OK",
+                            'error': None
+                        }
     
     # Determine status
     if not enabled:
@@ -297,7 +341,7 @@ def get_camera_status(camera: Dict[str, Any], use_ffprobe: bool = False) -> Dict
     
     # Determine connection quality
     if connection_result['connected']:
-        latency = connection_result.get('latency_ms', 0)
+        latency = connection_result.get('latency_ms', 0) or 0
         if latency < 500:
             quality = 'EXCELLENT'
             quality_badge = 'success'

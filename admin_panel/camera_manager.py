@@ -266,7 +266,7 @@ def test_camera(camera_id):
     for camera in cameras:
         if camera['id'] == camera_id:
             try:
-                status = get_camera_status(camera)
+                status = get_camera_status(camera, deep_check=True)
                 
                 if status['connection']['connected']:
                     latency = status['connection'].get('latency_ms', 0)

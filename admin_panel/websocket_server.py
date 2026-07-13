@@ -85,72 +85,7 @@ class WebSocketManager:
                 print(f"Error in camera poll loop: {e}")
             time.sleep(30)
     
-    def _check_new_detections(self):
-        """Check for new detections and broadcast to clients"""
-        try:
-            with DatabaseConnection() as db:
-                # Replaces the previous COUNT(*) + separate SELECT pattern (two DB round-trips).
-                query = """
-                    SELECT id, timestamp, license_plate, camera_source, detection_confidence,
-                           verification_status, access_granted,
-                           image_full_annotated, bbox_x1, bbox_y1, bbox_x2, bbox_y2
-                    FROM detections
-                    WHERE id > %s
-                    ORDER BY id DESC
-                    LIMIT 5
-                """
-                db.execute(query, (self.last_seen_id,))
-                rows = db.fetchall()
 
-                if rows:
-                    new_detections = []
-                    max_id = self.last_seen_id
-                    for row in rows:
-                        new_detections.append({
-                            'timestamp': row['timestamp'].isoformat() if row['timestamp'] else '',
-                            'plate': row['license_plate'],
-                            'camera': row['camera_source'],
-                            'confidence': float(row['detection_confidence']),
-                            'verification_status': row['verification_status'],
-                            'access_granted': row['access_granted'],
-                            'image_full_annotated': row['image_full_annotated'] or '',
-                            'bbox_x1': row['bbox_x1'],
-                            'bbox_y1': row['bbox_y1'],
-                            'bbox_x2': row['bbox_x2'],
-                            'bbox_y2': row['bbox_y2']
-                        })
-                        if row['id'] > max_id:
-                            max_id = row['id']
-
-                    self.last_seen_id = max_id
-                    self.last_detection_time = datetime.now().isoformat()
-
-                    # Get accurate total count from DB for dashboard
-                    try:
-                        with DatabaseConnection() as _db:
-                            _db.execute("SELECT COUNT(*) as total FROM detections")
-                            _res = _db.fetchone()
-                            total_count = int(_res['total']) if _res else self.last_detection_count
-                    except Exception:
-                        total_count = self.last_detection_count + len(new_detections)
-                    self.last_detection_count = total_count
-
-                    # Broadcast to all connected clients
-                    self.socketio.emit('new_detections', {
-                        'detections': new_detections,
-                        'count': len(new_detections),   # number of NEW detections in this batch
-                        'total': total_count,            # total all-time detections
-                        'timestamp': self.last_detection_time
-                    }, broadcast=True)
-
-                    self.socketio.emit('detection_update', {
-                        'new_count': len(new_detections),
-                        'total_count': total_count,
-                        'latest_detection': new_detections[0] if new_detections else None
-                    }, room='dashboard')
-
-        except Exception as e:
-            print(f"Error checking new detections: {e}")
     
     def _get_recent_detections(self, limit: int = 5) -> List[Dict[str, Any]]:
         """Get recent detections from MySQL"""

@@ -83,6 +83,64 @@ def check_plate_status(plate: str) -> str:
         print(f"⚠️ Error checking plate {plate}: {e}")
         return 'NOT_VERIFIED'
 
+def check_plates_status_bulk(plates: List[str]) -> Dict[str, str]:
+    """
+    Check status of multiple license plates in bulk, using cache when available.
+    Returns a dict mapping plate -> status ('VERIFIED', 'BLACKLISTED', 'NOT_VERIFIED').
+    """
+    try:
+        current_time = time.time()
+        clean_plates = {p.replace(" ", "").upper() for p in plates if p.strip()}
+        results = {}
+        missing_plates = []
+
+        # 1. Check cache first
+        with _cache_lock:
+            for p in clean_plates:
+                if p in _PLATE_CACHE:
+                    status, timestamp = _PLATE_CACHE[p]
+                    if current_time - timestamp < _CACHE_TTL:
+                        results[p] = status
+                        continue
+                missing_plates.append(p)
+
+        if not missing_plates:
+            return results
+
+        # 2. Query database in bulk for missing plates
+        allowed_set = set()
+        blacklisted_set = set()
+
+        with DatabaseConnection() as db:
+            format_strings = ','.join(['%s'] * len(missing_plates))
+            
+            # Check blacklist
+            db.execute(f"SELECT license_plate FROM blacklist_plates WHERE license_plate IN ({format_strings})", tuple(missing_plates))
+            for row in db.fetchall():
+                blacklisted_set.add(row['license_plate'])
+
+            # Check allowed list
+            db.execute(f"SELECT license_plate FROM allowed_plates WHERE license_plate IN ({format_strings})", tuple(missing_plates))
+            for row in db.fetchall():
+                allowed_set.add(row['license_plate'])
+
+        # 3. Populate results and update cache
+        with _cache_lock:
+            for p in missing_plates:
+                if p in blacklisted_set:
+                    status = 'BLACKLISTED'
+                elif p in allowed_set:
+                    status = 'VERIFIED'
+                else:
+                    status = 'NOT_VERIFIED'
+                results[p] = status
+                _PLATE_CACHE[p] = (status, current_time)
+
+        return results
+    except Exception as e:
+        print(f"⚠️ Error checking plates in bulk: {e}")
+        return {p.replace(" ", "").upper(): 'NOT_VERIFIED' for p in plates}
+
 class PlateLogger:
     """
     MySQL Logger for ANPR detections with verification against allowed plates
@@ -211,11 +269,13 @@ class PlateLogger:
     def _import_plates_to_db(self, plates: List[str]):
         """Import plates from list to database"""
         try:
-            with DatabaseConnection() as db:
-                for plate in plates:
-                    clean_plate = plate.replace(" ", "").upper()
-                    query = "INSERT IGNORE INTO allowed_plates (license_plate) VALUES (%s)"
-                    db.execute(query, (clean_plate,))
+            params_list = [(plate.replace(" ", "").upper(),) for plate in plates]
+            if params_list:
+                with DatabaseConnection() as db:
+                    db.cursor.executemany(
+                        "INSERT IGNORE INTO allowed_plates (license_plate) VALUES (%s)",
+                        params_list
+                    )
         except Exception as e:
             print(f"Warning: Error importing plates to database: {e}")
     
@@ -490,13 +550,19 @@ class PlateLogger:
             
             with self.lock:
                 recent_items = list(self.recent_detections.items())
+            
+            # Filter active plates
+            active_plates = [plate for plate, (timestamp, confidence, count) in recent_items if current_time - timestamp < self.dedup_window * 2]
+            
+            # Bulk check status
+            status_map = check_plates_status_bulk(active_plates) if active_plates else {}
+            
             for plate, (timestamp, confidence, count) in recent_items:
                 if current_time - timestamp < self.dedup_window * 2:
                     active_detections += 1
                     total_detection_count += count
 
-                    # Query DB (uses cache internally — no extra DB round-trip per call)
-                    plate_status = check_plate_status(plate)
+                    plate_status = status_map.get(plate.replace(" ", "").upper(), 'NOT_VERIFIED')
                     if plate_status == 'VERIFIED':
                         verified_count += 1
                     else:
