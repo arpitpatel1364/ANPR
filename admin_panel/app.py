@@ -77,6 +77,56 @@ app.register_blueprint(detection_bp)
 app.register_blueprint(api_bridge_bp)
 app.register_blueprint(settings_bp)
 
+# Custom Jinja2 filter for parsing Indian license plates
+@app.template_filter('parse_plate')
+def parse_plate_filter(plate_str):
+    import re
+    if not plate_str:
+        return {'state': '-', 'district': '-', 'series': '-', 'number': '-'}
+    
+    # Strip spaces and convert to uppercase
+    plate_str = plate_str.strip().upper()
+    
+    # 1. Standard format: State(2 letters), District(2 digits), Series(1-3 letters), Number(1-4 digits)
+    # E.g., GJ01ABC1212 -> State: GJ, District: 01, Series: ABC, Number: 1212
+    m = re.match(r'^([A-Z]{2})([0-9]{2})([A-Z]{1,3})([0-9]{1,4})$', plate_str)
+    if m:
+        return {
+            'state': m.group(1),
+            'district': m.group(2),
+            'series': m.group(3),
+            'number': m.group(4)
+        }
+    
+    # 2. BH Series format: Year(2 digits), BH, Number(4 digits), Series(1-2 letters)
+    # E.g., 22BH1234A -> State: 22, District: BH, Series: A, Number: 1234
+    m_bh = re.match(r'^([0-9]{2})(BH)([0-9]{4})([A-Z]{1,2})$', plate_str)
+    if m_bh:
+        return {
+            'state': m_bh.group(1),
+            'district': m_bh.group(2),
+            'series': m_bh.group(4),
+            'number': m_bh.group(3)
+        }
+        
+    # 3. Fallback for other Indian plates (e.g. 1-digit district DL3C1234 or shorter number)
+    m_fallback = re.match(r'^([A-Z]{2})([0-9]{1,2})([A-Z]+)([0-9]+)$', plate_str)
+    if m_fallback:
+        return {
+            'state': m_fallback.group(1),
+            'district': m_fallback.group(2),
+            'series': m_fallback.group(3),
+            'number': m_fallback.group(4)
+        }
+        
+    # 4. Absolute fallback slicing
+    return {
+        'state': plate_str[:2] if len(plate_str) >= 2 else plate_str,
+        'district': plate_str[2:4] if len(plate_str) >= 4 else '-',
+        'series': plate_str[4:6] if len(plate_str) >= 6 else '-',
+        'number': plate_str[6:] if len(plate_str) > 6 else '-'
+    }
+
 # Register WebSocket events
 ws_manager = register_websocket_events(socketio)
 set_socketio(socketio)  # Make socketio available for broadcasting in other modules

@@ -147,22 +147,23 @@
                         </thead>
                         <tbody>
                             {% for plate in plates %}
+                            {% set parsed = plate|parse_plate %}
                             <tr>
                                 <td>{{ loop.index }}</td>
                                 <td>
-                                    <span class="fw-bold text-primary">{{ plate }}</span>
+                                     <span class="fw-bold text-primary">{{ plate }}</span>
                                 </td>
                                 <td>
-                                    <span class="badge badge-modern bg-info-gradient">{{ plate[:2] if plate|length >= 2 else '-' }}</span>
+                                     <span class="badge badge-modern bg-info-gradient">{{ parsed.state }}</span>
                                 </td>
                                 <td>
-                                    <span class="badge badge-modern bg-primary-gradient">{{ plate[2:4] if plate|length >= 4 else '-' }}</span>
+                                     <span class="badge badge-modern bg-primary-gradient">{{ parsed.district }}</span>
                                 </td>
                                 <td>
-                                    <span class="badge badge-modern bg-warning-gradient">{{ plate[4:6] if plate|length >= 6 else '-' }}</span>
+                                     <span class="badge badge-modern bg-warning-gradient">{{ parsed.series }}</span>
                                 </td>
                                 <td>
-                                    <span class="badge badge-modern bg-success-gradient">{{ plate[6:] if plate|length > 6 else '-' }}</span>
+                                     <span class="badge badge-modern bg-success-gradient">{{ parsed.number }}</span>
                                 </td>
                                 {% if session.get('user_role') in ['admin', 'superadmin'] %}
                                 <td>
