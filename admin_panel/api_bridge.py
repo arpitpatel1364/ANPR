@@ -490,6 +490,13 @@ def health_check():
 def get_dashboard_traffic():
     """Get traffic data for the last 24 hours grouped by hour"""
     try:
+        # Generate a continuous timeline of the last 24 hours up to the current hour
+        now = datetime.now()
+        current_hour = now.replace(minute=0, second=0, microsecond=0)
+        hours_list = [current_hour - timedelta(hours=i) for i in range(23, -1, -1)]
+        hours_keys = [h.strftime('%Y-%m-%d %H:00:00') for h in hours_list]
+        traffic_map = {hk: 0 for hk in hours_keys}
+
         with DatabaseConnection() as db:
             query = """
                 SELECT DATE_FORMAT(timestamp, '%Y-%m-%d %H:00:00') as hour, COUNT(*) as count 
@@ -501,11 +508,13 @@ def get_dashboard_traffic():
             db.execute(query)
             rows = db.fetchall()
             
-            labels = []
-            data = []
             for row in rows:
-                labels.append(row['hour'])
-                data.append(row['count'])
+                hour_str = row['hour']
+                if hour_str in traffic_map:
+                    traffic_map[hour_str] = row['count']
+                
+            labels = hours_keys
+            data = [traffic_map[hk] for hk in hours_keys]
                 
             return jsonify({
                 'success': True,
