@@ -1,6 +1,6 @@
 # Core ML and Computer Vision
 ultralytics>=8.0.0
-opencv-python>=4.5.0
+opencv-python>=4.8.0
 numpy>=1.21.0
 
 # torch
@@ -9,6 +9,16 @@ numpy>=1.21.0
 torch==2.12.0
 torchvision
 torchaudio
+
+# ── Awiros ANPR-OCR (PP-OCRv5) dependencies ──────────────────────────────────
+# paddlepaddle-gpu==2.6.2  # ← uncomment for GPU, comment the CPU line below
+# paddlepaddle==2.6.2        # Pinned: 3.x breaks ppocr.modeling internal APIs
+safetensors>=0.4.0         # load model.safetensors weights
+PyYAML>=6.0                # required by ppocr.modeling internals
+shapely>=2.0.0             # required by ppocr.modeling (geometry ops)
+# NOTE: PaddleOCR source repo is auto-cloned into newmodel/PaddleOCR/ on
+#       first run by AwirosOCR — no manual step needed.
+
 
 # Web and API
 requests>=2.25.0

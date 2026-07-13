@@ -90,8 +90,10 @@ def detections():
             params = []
             
             if search:
-                where_clauses.append("license_plate LIKE %s")
-                params.append(f"%{search}%")
+                query_search = search.replace(' ', '').upper()
+                search_clean = query_search.replace('O', '0').replace('I', '1').replace('Z', '2')
+                where_clauses.append("(UPPER(license_plate) LIKE %s OR REPLACE(REPLACE(REPLACE(UPPER(license_plate), 'O', '0'), 'I', '1'), 'Z', '2') LIKE %s)")
+                params.extend([f"%{query_search}%", f"%{search_clean}%"])
             
             if query_status:  # Only add filter if query_status is not empty
                 where_clauses.append("verification_status = %s")
@@ -226,8 +228,10 @@ def detections_data_api():
             params = []
 
             if search:
-                where_clauses.append("license_plate LIKE %s")
-                params.append(f"%{search}%")
+                query_search = search.replace(' ', '').upper()
+                search_clean = query_search.replace('O', '0').replace('I', '1').replace('Z', '2')
+                where_clauses.append("(UPPER(license_plate) LIKE %s OR REPLACE(REPLACE(REPLACE(UPPER(license_plate), 'O', '0'), 'I', '1'), 'Z', '2') LIKE %s)")
+                params.extend([f"%{query_search}%", f"%{search_clean}%"])
             if query_status:
                 where_clauses.append("verification_status = %s")
                 params.append(query_status)
@@ -327,8 +331,10 @@ def export_detections():
             params = []
             
             if search:
-                where_clauses.append("license_plate LIKE %s")
-                params.append(f"%{search}%")
+                query_search = search.replace(' ', '').upper()
+                search_clean = query_search.replace('O', '0').replace('I', '1').replace('Z', '2')
+                where_clauses.append("(UPPER(license_plate) LIKE %s OR REPLACE(REPLACE(REPLACE(UPPER(license_plate), 'O', '0'), 'I', '1'), 'Z', '2') LIKE %s)")
+                params.extend([f"%{query_search}%", f"%{search_clean}%"])
             
             if query_status:  # Only add filter if query_status is not empty
                 where_clauses.append("verification_status = %s")
@@ -425,8 +431,10 @@ def export_detections_pdf():
             params = []
             
             if search:
-                where_clauses.append("license_plate LIKE %s")
-                params.append(f"%{search}%")
+                query_search = search.replace(' ', '').upper()
+                search_clean = query_search.replace('O', '0').replace('I', '1').replace('Z', '2')
+                where_clauses.append("(UPPER(license_plate) LIKE %s OR REPLACE(REPLACE(REPLACE(UPPER(license_plate), 'O', '0'), 'I', '1'), 'Z', '2') LIKE %s)")
+                params.extend([f"%{query_search}%", f"%{search_clean}%"])
             
             if query_status:  # Only add filter if query_status is not empty
                 where_clauses.append("verification_status = %s")

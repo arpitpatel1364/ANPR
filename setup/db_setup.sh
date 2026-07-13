@@ -16,7 +16,7 @@ fi
 
 info "Waiting for DB..."
 for i in {1..30}; do
-    nc -z 127.0.0.1 3306 && break
+    nc -z 127.0.0.1 3307 && break
     sleep 2
 done
 

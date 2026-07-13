@@ -270,6 +270,87 @@ def api_stats():
         return jsonify(stats)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+        
+@app.route('/system-health')
+@login_required
+def system_health():
+    """System health dashboard for superadmin only"""
+    if session.get('user_role') != 'superadmin':
+        flash('Access denied. Super Administrator privileges required.', 'error')
+        return redirect(url_for('dashboard'))
+    return render_template('system_health.html')
+
+@app.route('/api/system-health')
+@login_required
+def api_system_health():
+    """API endpoint for system health metrics (superadmin only)"""
+    if session.get('user_role') != 'superadmin':
+        return jsonify({'error': 'Unauthorized'}), 403
+        
+    try:
+        import psutil
+        import time
+        import datetime
+        
+        cpu_percent = psutil.cpu_percent(interval=0.1)
+        mem = psutil.virtual_memory()
+        mem_percent = mem.percent
+        
+        # Disk Usage
+        disk = psutil.disk_usage('/')
+        disk_total = round(disk.total / (1024**3), 2)
+        disk_used = round(disk.used / (1024**3), 2)
+        disk_percent = disk.percent
+        
+        # Network I/O (Calculate difference between calls if we want speed, but for now just send totals)
+        net = psutil.net_io_counters()
+        
+        # CPU details
+        cpu_cores_logical = psutil.cpu_count(logical=True)
+        try:
+            cpu_freq = psutil.cpu_freq().current if psutil.cpu_freq() else 0
+        except Exception:
+            cpu_freq = 0
+            
+        # Uptime
+        uptime_seconds = time.time() - psutil.boot_time()
+        uptime_str = str(datetime.timedelta(seconds=int(uptime_seconds)))
+        
+        gpu_info = None
+        try:
+            import subprocess
+            result = subprocess.run(['nvidia-smi', '--query-gpu=utilization.gpu,memory.used,memory.total', '--format=csv,noheader,nounits'], 
+                                   capture_output=True, text=True, timeout=2)
+            if result.returncode == 0 and result.stdout.strip():
+                gpu_stats = result.stdout.strip().split(', ')
+                if len(gpu_stats) >= 3:
+                    gpu_info = {
+                        'utilization': float(gpu_stats[0]),
+                        'mem_used': float(gpu_stats[1]),
+                        'mem_total': float(gpu_stats[2]),
+                        'mem_percent': round((float(gpu_stats[1]) / float(gpu_stats[2])) * 100, 1) if float(gpu_stats[2]) > 0 else 0
+                    }
+        except Exception:
+            pass # No nvidia-smi or GPU
+            
+        return jsonify({
+            'cpu_percent': cpu_percent,
+            'cpu_cores': cpu_cores_logical,
+            'cpu_freq': round(cpu_freq, 0),
+            'mem_percent': mem_percent,
+            'mem_used': round(mem.used / (1024**3), 2),
+            'mem_total': round(mem.total / (1024**3), 2),
+            'disk_total': disk_total,
+            'disk_used': disk_used,
+            'disk_percent': disk_percent,
+            'net_bytes_sent': net.bytes_sent,
+            'net_bytes_recv': net.bytes_recv,
+            'uptime': uptime_str,
+            'gpu': gpu_info,
+            'timestamp': time.time()
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 
 if __name__ == '__main__':

@@ -45,9 +45,10 @@ _PLATE_CACHE = BoundedLRUCache(maxsize=5000)         # { plate: (is_allowed, tim
 _CACHE_TTL = 30           # seconds
 _cache_lock = threading.Lock()
 
-def is_plate_allowed(plate: str) -> bool:
+def check_plate_status(plate: str) -> str:
     """
-    Check if a license plate is in the allowed list using Hybrid Cache.
+    Check if a license plate is in the allowed list or blacklist using Hybrid Cache.
+    Returns: 'VERIFIED', 'BLACKLISTED', or 'NOT_VERIFIED'
     """
     try:
         clean_plate = plate.replace(" ", "").upper()
@@ -56,24 +57,31 @@ def is_plate_allowed(plate: str) -> bool:
         # Check cache
         with _cache_lock:
             if clean_plate in _PLATE_CACHE:
-                is_allowed, timestamp = _PLATE_CACHE[clean_plate]
+                status, timestamp = _PLATE_CACHE[clean_plate]
                 if current_time - timestamp < _CACHE_TTL:
-                    return is_allowed
+                    return status
         
         # Query database directly if not in cache
         with DatabaseConnection() as db:
-            db.execute("SELECT id FROM allowed_plates WHERE license_plate = %s LIMIT 1", (clean_plate,))
-            result = db.fetchone()
-            is_allowed = result is not None
+            # Check blacklist first
+            db.execute("SELECT id FROM blacklist_plates WHERE license_plate = %s LIMIT 1", (clean_plate,))
+            if db.fetchone():
+                status = 'BLACKLISTED'
+            else:
+                db.execute("SELECT id FROM allowed_plates WHERE license_plate = %s LIMIT 1", (clean_plate,))
+                if db.fetchone():
+                    status = 'VERIFIED'
+                else:
+                    status = 'NOT_VERIFIED'
             
         # Update cache
         with _cache_lock:
-            _PLATE_CACHE[clean_plate] = (is_allowed, current_time)
+            _PLATE_CACHE[clean_plate] = (status, current_time)
         
-        return is_allowed
+        return status
     except Exception as e:
         print(f"⚠️ Error checking plate {plate}: {e}")
-        return False
+        return 'NOT_VERIFIED'
 
 class PlateLogger:
     """
@@ -232,19 +240,22 @@ class PlateLogger:
         clean_plate = plate.replace(" ", "").upper()
         
         # Check if plate is allowed by querying database directly (always current)
-        is_allowed = is_plate_allowed(clean_plate)
+        status = check_plate_status(clean_plate)
         
         # Determine verification status
-        if is_allowed:
-            verification_status = "VERIFIED"
+        if status == 'VERIFIED':
             access_granted = "YES"
-        else:
-            verification_status = "NOT_VERIFIED"
+            is_allowed = True
+        elif status == 'BLACKLISTED':
             access_granted = "NO"
+            is_allowed = False
+        else:
+            access_granted = "NO"
+            is_allowed = False
         
         return {
             'is_allowed': is_allowed,
-            'verification_status': verification_status,
+            'verification_status': status,
             'access_granted': access_granted,
             'clean_plate': clean_plate
         }

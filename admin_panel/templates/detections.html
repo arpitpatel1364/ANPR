@@ -168,6 +168,7 @@
                                 <option value="all" {{ 'selected' if status_filter == 'all' or not status_filter }}>All Status</option>
                                 <option value="VERIFIED" {{ 'selected' if status_filter == 'VERIFIED' }}>Verified</option>
                                 <option value="NOT_VERIFIED" {{ 'selected' if status_filter == 'NOT_VERIFIED' }}>Not Verified</option>
+                                <option value="BLACKLISTED" {{ 'selected' if status_filter == 'BLACKLISTED' }}>Blacklisted</option>
                             </select>
                         </div>
                         <div class="filter-group">
@@ -270,7 +271,7 @@
                                     <span class="fw-bold text-primary">{{ detection.License_Plate or '-' }}</span>
                                 </td>
                                 <td>
-                                    <span class="badge badge-modern bg-{{ 'success' if detection.Verification_Status == 'VERIFIED' else 'warning' }}">
+                                    <span class="badge badge-modern bg-{{ 'success' if detection.Verification_Status == 'VERIFIED' else 'danger' if detection.Verification_Status == 'BLACKLISTED' else 'warning' }}">
                                         {{ detection.Verification_Status or '-' }}
                                     </span>
                                 </td>
@@ -540,7 +541,7 @@ function renderDetectionsTable(data, isLoadMore = false) {
         const camera = d.Camera_Source || '-';
         const ann = d.Image_Full_Annotated || '';
         const x1 = d.bbox_x1, y1 = d.bbox_y1, x2 = d.bbox_x2, y2 = d.bbox_y2;
-        const statusBg = status === 'VERIFIED' ? 'success' : 'warning';
+        const statusBg = status === 'VERIFIED' ? 'success' : (status === 'BLACKLISTED' ? 'danger' : 'warning');
         const accessBg = access === 'YES' ? 'success' : 'danger';
 
         let imgHtml = '<i class="bi bi-image text-muted"></i>';
@@ -754,7 +755,7 @@ document.addEventListener('DOMContentLoaded', function() {
 function viewDetails(d) {
     const timestamp = d.Timestamp ? d.Timestamp.split('.')[0] : '-';
     const ann = d.Image_Full_Annotated || '';
-    const statusBadge = d.Verification_Status === 'VERIFIED' ? 'bg-success-gradient' : 'bg-warning-gradient';
+    const statusBadge = d.Verification_Status === 'VERIFIED' ? 'bg-success-gradient' : (d.Verification_Status === 'BLACKLISTED' ? 'bg-danger-gradient' : 'bg-warning-gradient');
     const accessBadge = d.Access_Granted === 'YES' ? 'bg-success-gradient' : 'bg-danger-gradient';
 
     const imagesHtml = ann ? `
@@ -876,6 +877,18 @@ setInterval(loadStats, 30000);
 document.addEventListener('DOMContentLoaded', function() {
     loadStats();
     processDynamicCrops();
+    
+    // Auto-search after 1 second of typing inactivity (debounce)
+    let searchTimeout;
+    const searchInput = document.getElementById('search');
+    if (searchInput) {
+        searchInput.addEventListener('input', function() {
+            clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(function() {
+                applyFilters(1);
+            }, 1000);
+        });
+    }
 });
 </script>
 {% endblock %}

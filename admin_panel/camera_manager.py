@@ -577,3 +577,24 @@ def preview_rtsp():
         'frame_height': int(frame.shape[0])
     })
 
+
+@camera_bp.route('/cameras/restart/<camera_id>', methods=['POST'])
+@require_auth
+def manual_restart_camera(camera_id):
+    """Signal the inference engine to manually restart a specific camera"""
+    import os
+    try:
+        # Append to restart_requests.txt in the scripts directory
+        trigger_file = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'scripts', 'restart_requests.txt')
+        with open(trigger_file, 'a') as f:
+            f.write(f"{camera_id}\n")
+            
+        return jsonify({
+            'success': True,
+            'message': f'Restart signal sent for camera {camera_id}'
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'Error requesting restart: {str(e)}'
+        }), 500

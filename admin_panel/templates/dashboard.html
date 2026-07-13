@@ -144,11 +144,29 @@
     </div>
 </div>
 
+<!-- Traffic Chart -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card card-modern-enhanced border-0 shadow-sm">
+            <div class="card-header bg-white border-0 pt-4 px-4 pb-2 d-flex justify-content-between align-items-center">
+                <h5 class="card-title mb-0">
+                    <i class="bi bi-graph-up text-primary me-2"></i>Traffic Volume (Last 24 Hours)
+                </h5>
+            </div>
+            <div class="card-body px-4 pb-4 pt-2">
+                <div style="height: 300px; width: 100%;">
+                    <canvas id="trafficChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
         <!-- System Status & Real-Time Info -->
         <div class="row mb-4">
             <div class="col-lg-6 mb-4">
-                <div class="card card-modern-enhanced">
-                    <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-3">
+                <div class="card card-modern-enhanced border-0 shadow-sm h-100">
+                    <div class="card-header bg-white border-0 pt-4 px-4 pb-2 d-flex justify-content-between align-items-center flex-wrap gap-3">
                         <div class="d-flex align-items-center flex-wrap gap-3">
                             <h5 class="card-title mb-0">
                                 <i class="bi bi-activity me-2"></i>System Status
@@ -180,7 +198,7 @@
                         </div>
                         {% endif %}
                     </div>
-                    <div class="card-body">
+                    <div class="card-body px-4 pb-4">
                         <div class="row">
                             <div class="col-6">
                                 <div class="status-item">
@@ -226,8 +244,8 @@
             </div>
             
             <div class="col-lg-6 mb-4">
-                <div class="card card-modern-enhanced">
-                    <div class="card-header d-flex justify-content-between align-items-center">
+                <div class="card card-modern-enhanced border-0 shadow-sm">
+                    <div class="card-header bg-white border-0 pt-4 px-4 pb-2 d-flex justify-content-between align-items-center">
                         <h5 class="card-title mb-0">
                             <i class="bi bi-graph-up me-2"></i>Live Activity
                         </h5>
@@ -237,7 +255,7 @@
                             </button>
                         </div>
                     </div>
-                    <div class="card-body">
+                    <div class="card-body px-4 pb-4">
                         <div class="activity-feed" id="activityFeed">
                             <div class="activity-item">
                                 <div class="activity-icon bg-primary-gradient">
@@ -257,8 +275,8 @@
 <!-- Recent Detections -->
 <div class="row">
     <div class="col-12">
-        <div class="card card-modern-enhanced">
-            <div class="card-header bg-white border-0 d-flex justify-content-between align-items-center">
+        <div class="card card-modern-enhanced border-0 shadow-sm">
+            <div class="card-header bg-white border-0 pt-4 px-4 pb-2 d-flex justify-content-between align-items-center">
                 <h5 class="card-title mb-0">
                     <i class="bi bi-clock-history me-2"></i>Recent Detections
                 </h5>
@@ -266,7 +284,7 @@
                     View All <i class="bi bi-arrow-right ms-1"></i>
                 </a>
             </div>
-            <div class="card-body">
+            <div class="card-body px-4 pb-4">
                 {% if recent_detections %}
                 <div class="table-responsive">
                     <table class="table table-modern table-hover">
@@ -413,6 +431,51 @@ function processDynamicCrops() {
 
 document.addEventListener('DOMContentLoaded', function() {
     processDynamicCrops();
+    
+    // Initialize Traffic Chart
+    fetch('/api/dashboard/traffic')
+        .then(res => res.json())
+        .then(data => {
+            if (data.success && data.labels.length > 0) {
+                // Formatting labels to show just hour (e.g., "14:00")
+                const formattedLabels = data.labels.map(l => {
+                    const d = new Date(l);
+                    return d.getHours().toString().padStart(2, '0') + ':00';
+                });
+                
+                const ctx = document.getElementById('trafficChart').getContext('2d');
+                new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: formattedLabels,
+                        datasets: [{
+                            label: 'Detections',
+                            data: data.data,
+                            borderColor: '#0d6efd',
+                            backgroundColor: 'rgba(13, 110, 253, 0.1)',
+                            borderWidth: 2,
+                            fill: true,
+                            tension: 0.4,
+                            pointRadius: 3,
+                            pointBackgroundColor: '#0d6efd'
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: { display: false }
+                        },
+                        scales: {
+                            y: { beginAtZero: true, grid: { borderDash: [2, 4] } },
+                            x: { grid: { display: false } }
+                        }
+                    }
+                });
+            }
+        })
+        .catch(err => console.error('Error loading traffic chart:', err));
 });
 </script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 {% endblock %}

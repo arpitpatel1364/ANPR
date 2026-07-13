@@ -330,18 +330,32 @@
 {% block extra_js %}
 <script>
 // Search functionality
-document.getElementById('searchInput').addEventListener('input', function() {
-    const searchTerm = this.value.toLowerCase();
+let plateSearchTimeout;
+
+function performSearch() {
+    const searchInput = document.getElementById('searchInput');
+    if (!searchInput) return;
+    
+    const searchTerm = searchInput.value.toLowerCase().replace(/\s+/g, '');
+    const fuzzySearch = searchTerm.replace(/o/g, '0').replace(/i/g, '1').replace(/z/g, '2');
     const tableRows = document.querySelectorAll('#platesTable tbody tr');
     
     tableRows.forEach(row => {
-        const plateText = row.cells[1].textContent.toLowerCase();
-        if (plateText.includes(searchTerm)) {
+        const plateText = row.cells[1].textContent.toLowerCase().replace(/\s+/g, '');
+        const fuzzyPlateText = plateText.replace(/o/g, '0').replace(/i/g, '1').replace(/z/g, '2');
+        
+        // Match either exact input or fuzzy translation
+        if (plateText.includes(searchTerm) || fuzzyPlateText.includes(fuzzySearch)) {
             row.style.display = '';
         } else {
             row.style.display = 'none';
         }
     });
+}
+
+document.getElementById('searchInput').addEventListener('input', function() {
+    clearTimeout(plateSearchTimeout);
+    plateSearchTimeout = setTimeout(performSearch, 1000);
 });
 
 // Clear search

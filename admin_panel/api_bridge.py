@@ -484,3 +484,36 @@ def health_check():
             'status': 'unhealthy',
             'error': str(e)
         }), 500
+
+@api_bridge_bp.route('/api/dashboard/traffic')
+@require_auth
+def get_dashboard_traffic():
+    """Get traffic data for the last 24 hours grouped by hour"""
+    try:
+        with DatabaseConnection() as db:
+            query = """
+                SELECT DATE_FORMAT(timestamp, '%Y-%m-%d %H:00:00') as hour, COUNT(*) as count 
+                FROM detections 
+                WHERE timestamp >= DATE_SUB(NOW(), INTERVAL 24 HOUR) 
+                GROUP BY hour 
+                ORDER BY hour ASC
+            """
+            db.execute(query)
+            rows = db.fetchall()
+            
+            labels = []
+            data = []
+            for row in rows:
+                labels.append(row['hour'])
+                data.append(row['count'])
+                
+            return jsonify({
+                'success': True,
+                'labels': labels,
+                'data': data
+            })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500

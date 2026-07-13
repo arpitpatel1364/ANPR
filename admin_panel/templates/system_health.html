@@ -1,0 +1,408 @@
+{% extends "base.html" %}
+
+{% block title %}System Health - ANPR Admin{% endblock %}
+
+{% block page_title %}System Health Monitor{% endblock %}
+{% block page_subtitle %}Real-time hardware performance metrics{% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col-12 text-center">
+        <div class="card card-modern-enhanced shadow-sm border-0" style="background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);">
+            <div class="card-body py-4">
+                <h4 class="mb-3 text-dark fw-bold">Hardware Monitoring</h4>
+                <p class="text-muted mb-4">Live tracking of system resources. Real-time updates occur every 2 seconds when active.</p>
+                
+                <div class="form-check form-switch d-inline-flex align-items-center justify-content-center" style="transform: scale(1.5);">
+                    <input class="form-check-input me-3" type="checkbox" id="healthToggle" onchange="toggleMonitoring()">
+                    <label class="form-check-label mb-0" for="healthToggle" id="toggleLabel" style="font-size: 0.9rem; font-weight: 600;">Monitoring Offline</label>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="metricsRow" style="opacity: 0.5; pointer-events: none; transition: opacity 0.4s ease-in-out;">
+    
+    <!-- Top Stats Row -->
+    <div class="row mb-4 g-3">
+        <!-- Uptime -->
+        <div class="col-md-3 col-sm-6">
+            <div class="card stats-card border-0 shadow-sm h-100">
+                <div class="card-body">
+                    <div class="d-flex align-items-center">
+                        <div class="stats-icon bg-info text-white rounded-circle d-flex align-items-center justify-content-center" style="width: 48px; height: 48px;">
+                            <i class="bi bi-clock-history fs-4"></i>
+                        </div>
+                        <div class="ms-3">
+                            <h6 class="card-title text-muted mb-1 text-uppercase" style="font-size: 0.75rem; letter-spacing: 0.5px;">System Uptime</h6>
+                            <h4 class="mb-0 fw-bold" id="uptimeValue">--:--:--</h4>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- CPU Cores -->
+        <div class="col-md-3 col-sm-6">
+            <div class="card stats-card border-0 shadow-sm h-100">
+                <div class="card-body">
+                    <div class="d-flex align-items-center">
+                        <div class="stats-icon bg-primary text-white rounded-circle d-flex align-items-center justify-content-center" style="width: 48px; height: 48px;">
+                            <i class="bi bi-cpu fs-4"></i>
+                        </div>
+                        <div class="ms-3">
+                            <h6 class="card-title text-muted mb-1 text-uppercase" style="font-size: 0.75rem; letter-spacing: 0.5px;">CPU Cores</h6>
+                            <h4 class="mb-0 fw-bold" id="cpuCoresValue">--</h4>
+                            <small class="text-muted" id="cpuFreqValue">-- MHz</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Disk Usage -->
+        <div class="col-md-3 col-sm-6">
+            <div class="card stats-card border-0 shadow-sm h-100">
+                <div class="card-body">
+                    <div class="d-flex align-items-center">
+                        <div class="stats-icon bg-success text-white rounded-circle d-flex align-items-center justify-content-center" style="width: 48px; height: 48px;">
+                            <i class="bi bi-hdd fs-4"></i>
+                        </div>
+                        <div class="ms-3 w-100">
+                            <h6 class="card-title text-muted mb-1 text-uppercase" style="font-size: 0.75rem; letter-spacing: 0.5px;">Disk Usage</h6>
+                            <h4 class="mb-0 fw-bold" id="diskPercentValue">--%</h4>
+                            <div class="progress mt-2" style="height: 4px;">
+                                <div class="progress-bar bg-success" id="diskProgressBar" role="progressbar" style="width: 0%"></div>
+                            </div>
+                            <small class="text-muted d-block mt-1" id="diskUsageValue">-- / -- GB</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Network I/O -->
+        <div class="col-md-3 col-sm-6">
+            <div class="card stats-card border-0 shadow-sm h-100">
+                <div class="card-body">
+                    <div class="d-flex align-items-center">
+                        <div class="stats-icon bg-warning text-white rounded-circle d-flex align-items-center justify-content-center" style="width: 48px; height: 48px;">
+                            <i class="bi bi-arrow-down-up fs-4"></i>
+                        </div>
+                        <div class="ms-3">
+                            <h6 class="card-title text-muted mb-1 text-uppercase" style="font-size: 0.75rem; letter-spacing: 0.5px;">Network I/O</h6>
+                            <div class="d-flex flex-column">
+                                <span class="fw-bold text-success"><i class="bi bi-arrow-down me-1"></i><span id="netDownValue">-- KB/s</span></span>
+                                <span class="fw-bold text-primary"><i class="bi bi-arrow-up me-1"></i><span id="netUpValue">-- KB/s</span></span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Charts Row -->
+    <div class="row g-4">
+        <!-- CPU Chart -->
+        <div class="col-lg-6">
+            <div class="card card-modern-enhanced border-0 shadow-sm h-100">
+                <div class="card-header bg-transparent border-0 pt-4 pb-2 d-flex justify-content-between align-items-center">
+                    <h5 class="card-title text-dark fw-bold mb-0">
+                        <i class="bi bi-activity text-primary me-2"></i>CPU Utilization
+                    </h5>
+                    <span class="badge bg-primary rounded-pill fs-6" id="cpuBadge">--%</span>
+                </div>
+                <div class="card-body">
+                    <div style="height: 250px; width: 100%;">
+                        <canvas id="cpuChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- RAM Chart -->
+        <div class="col-lg-6">
+            <div class="card card-modern-enhanced border-0 shadow-sm h-100">
+                <div class="card-header bg-transparent border-0 pt-4 pb-2 d-flex justify-content-between align-items-center">
+                    <h5 class="card-title text-dark fw-bold mb-0">
+                        <i class="bi bi-memory text-success me-2"></i>Memory Usage
+                    </h5>
+                    <span class="badge bg-success rounded-pill fs-6" id="ramBadge">--%</span>
+                </div>
+                <div class="card-body">
+                    <div style="height: 250px; width: 100%;">
+                        <canvas id="ramChart"></canvas>
+                    </div>
+                    <div class="text-center mt-2">
+                        <small class="text-muted fw-bold" id="ramDetailBadge">-- / -- GB Used</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- GPU Chart -->
+        <div class="col-lg-12">
+            <div class="card card-modern-enhanced border-0 shadow-sm h-100" id="gpuCardContainer">
+                <div class="card-header bg-transparent border-0 pt-4 pb-2 d-flex justify-content-between align-items-center">
+                    <h5 class="card-title text-dark fw-bold mb-0">
+                        <i class="bi bi-gpu-card text-warning me-2"></i>GPU Utilization
+                    </h5>
+                    <span class="badge bg-warning rounded-pill fs-6 text-dark" id="gpuBadge">--%</span>
+                </div>
+                <div class="card-body">
+                    <div id="gpuChartContainer" style="height: 250px; width: 100%;">
+                        <canvas id="gpuChart"></canvas>
+                    </div>
+                    <div class="text-center mt-2">
+                        <small class="text-muted fw-bold" id="gpuDetailBadge">-- / -- MB VRAM Used</small>
+                    </div>
+                    
+                    <div id="noGpuMessage" class="d-none text-center py-5">
+                        <i class="bi bi-gpu-card text-muted opacity-25" style="font-size: 4rem;"></i>
+                        <h5 class="text-muted mt-3">No NVIDIA GPU Detected</h5>
+                        <p class="text-muted small">The system will continue to run using CPU resources.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+let pollingInterval = null;
+const MAX_DATA_POINTS = 30; // 60 seconds at 2s intervals
+
+// Chart Instances
+let cpuLineChart = null;
+let ramLineChart = null;
+let gpuLineChart = null;
+
+// Network Data Tracking for Speed Calculation
+let lastNetBytes = { sent: 0, recv: 0, time: 0 };
+
+function initCharts() {
+    const commonOptions = {
+        responsive: true,
+        maintainAspectRatio: false,
+        layout: {
+            padding: 20
+        },
+        animation: { duration: 0 },
+        interaction: { intersect: false, mode: 'index' },
+        plugins: {
+            legend: { display: false },
+            tooltip: { enabled: true }
+        },
+        scales: {
+            y: { 
+                beginAtZero: true, 
+                max: 120, 
+                grid: { borderDash: [4, 4], color: '#f0f0f0' },
+                ticks: { 
+                    stepSize: 20,
+                    callback: function(value) { 
+                        if (value > 100) return '';
+                        return value + '%';
+                    } 
+                }
+            },
+            x: { 
+                display: false, // hide x axis labels for cleaner look
+                grid: { display: false } 
+            }
+        },
+        elements: {
+            point: { radius: 0, hitRadius: 10, hoverRadius: 4 }
+        }
+    };
+
+    // CPU Chart
+    const ctxCpu = document.getElementById('cpuChart').getContext('2d');
+    const gradCpu = ctxCpu.createLinearGradient(0, 0, 0, 250);
+    gradCpu.addColorStop(0, 'rgba(13, 110, 253, 0.4)');
+    gradCpu.addColorStop(1, 'rgba(13, 110, 253, 0.0)');
+    
+    cpuLineChart = new Chart(ctxCpu, {
+        type: 'line',
+        data: {
+            labels: Array(MAX_DATA_POINTS).fill(''),
+            datasets: [{
+                label: 'CPU Usage',
+                data: Array(MAX_DATA_POINTS).fill(0),
+                borderColor: '#0d6efd',
+                backgroundColor: gradCpu,
+                borderWidth: 2,
+                fill: true,
+                tension: 0.4
+            }]
+        },
+        options: commonOptions
+    });
+
+    // RAM Chart
+    const ctxRam = document.getElementById('ramChart').getContext('2d');
+    const gradRam = ctxRam.createLinearGradient(0, 0, 0, 250);
+    gradRam.addColorStop(0, 'rgba(25, 135, 84, 0.4)');
+    gradRam.addColorStop(1, 'rgba(25, 135, 84, 0.0)');
+    
+    ramLineChart = new Chart(ctxRam, {
+        type: 'line',
+        data: {
+            labels: Array(MAX_DATA_POINTS).fill(''),
+            datasets: [{
+                label: 'RAM Usage',
+                data: Array(MAX_DATA_POINTS).fill(0),
+                borderColor: '#198754',
+                backgroundColor: gradRam,
+                borderWidth: 2,
+                fill: true,
+                tension: 0.4
+            }]
+        },
+        options: commonOptions
+    });
+
+    // GPU Chart
+    const ctxGpu = document.getElementById('gpuChart').getContext('2d');
+    const gradGpu = ctxGpu.createLinearGradient(0, 0, 0, 250);
+    gradGpu.addColorStop(0, 'rgba(255, 193, 7, 0.4)');
+    gradGpu.addColorStop(1, 'rgba(255, 193, 7, 0.0)');
+    
+    gpuLineChart = new Chart(ctxGpu, {
+        type: 'line',
+        data: {
+            labels: Array(MAX_DATA_POINTS).fill(''),
+            datasets: [{
+                label: 'GPU Usage',
+                data: Array(MAX_DATA_POINTS).fill(0),
+                borderColor: '#ffc107',
+                backgroundColor: gradGpu,
+                borderWidth: 2,
+                fill: true,
+                tension: 0.4
+            }]
+        },
+        options: commonOptions
+    });
+}
+
+function updateChartData(chart, value) {
+    if (!chart) return;
+    const dataArray = chart.data.datasets[0].data;
+    dataArray.push(value);
+    if (dataArray.length > MAX_DATA_POINTS) {
+        dataArray.shift();
+    }
+    chart.update();
+}
+
+function formatBytes(bytes, decimals = 2) {
+    if (!+bytes) return '0 Bytes';
+    const k = 1024;
+    const dm = decimals < 0 ? 0 : decimals;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
+}
+
+function toggleMonitoring() {
+    const isChecked = document.getElementById('healthToggle').checked;
+    const label = document.getElementById('toggleLabel');
+    const metricsRow = document.getElementById('metricsRow');
+    
+    if (isChecked) {
+        label.textContent = "Monitoring Active";
+        label.classList.add('text-success');
+        metricsRow.style.opacity = '1';
+        
+        if (!cpuLineChart) initCharts();
+        
+        fetchMetrics();
+        pollingInterval = setInterval(fetchMetrics, 2000);
+    } else {
+        label.textContent = "Monitoring Offline";
+        label.classList.remove('text-success');
+        metricsRow.style.opacity = '0.5';
+        if (pollingInterval) {
+            clearInterval(pollingInterval);
+            pollingInterval = null;
+        }
+    }
+}
+
+function fetchMetrics() {
+    fetch('/api/system-health')
+        .then(response => response.json())
+        .then(data => {
+            if (data.error) {
+                console.error("Health API Error:", data.error);
+                return;
+            }
+            
+            // 1. Top Cards
+            document.getElementById('uptimeValue').textContent = data.uptime || '--:--:--';
+            document.getElementById('cpuCoresValue').textContent = data.cpu_cores || '--';
+            document.getElementById('cpuFreqValue').textContent = (data.cpu_freq ? data.cpu_freq : '--') + ' MHz';
+            
+            document.getElementById('diskPercentValue').textContent = data.disk_percent + '%';
+            document.getElementById('diskProgressBar').style.width = data.disk_percent + '%';
+            document.getElementById('diskUsageValue').textContent = `${data.disk_used} / ${data.disk_total} GB`;
+            
+            // Calculate Network Speeds
+            const currentTime = Date.now() / 1000;
+            if (lastNetBytes.time !== 0 && data.net_bytes_recv !== undefined) {
+                const timeDiff = currentTime - lastNetBytes.time;
+                const recvDiff = data.net_bytes_recv - lastNetBytes.recv;
+                const sentDiff = data.net_bytes_sent - lastNetBytes.sent;
+                
+                const recvSpeed = Math.max(0, recvDiff / timeDiff);
+                const sentSpeed = Math.max(0, sentDiff / timeDiff);
+                
+                document.getElementById('netDownValue').textContent = formatBytes(recvSpeed) + '/s';
+                document.getElementById('netUpValue').textContent = formatBytes(sentSpeed) + '/s';
+            }
+            lastNetBytes = { sent: data.net_bytes_sent, recv: data.net_bytes_recv, time: currentTime };
+
+            // 2. Charts
+            const cpu = data.cpu_percent;
+            document.getElementById('cpuBadge').textContent = `${cpu}%`;
+            document.getElementById('cpuBadge').className = `badge rounded-pill fs-6 bg-${cpu > 85 ? 'danger' : 'primary'}`;
+            updateChartData(cpuLineChart, cpu);
+            
+            const ram = data.mem_percent;
+            document.getElementById('ramBadge').textContent = `${ram}%`;
+            document.getElementById('ramBadge').className = `badge rounded-pill fs-6 bg-${ram > 85 ? 'danger' : 'success'}`;
+            document.getElementById('ramDetailBadge').textContent = `${data.mem_used} / ${data.mem_total} GB Used`;
+            updateChartData(ramLineChart, ram);
+            
+            if (data.gpu) {
+                document.getElementById('gpuChartContainer').style.display = 'block';
+                document.getElementById('gpuDetailBadge').style.display = 'block';
+                document.getElementById('noGpuMessage').classList.add('d-none');
+                
+                const gpu = data.gpu.utilization;
+                document.getElementById('gpuBadge').textContent = `${gpu}%`;
+                document.getElementById('gpuBadge').className = `badge rounded-pill fs-6 text-dark bg-${gpu > 85 ? 'danger' : 'warning'}`;
+                document.getElementById('gpuDetailBadge').textContent = `${Math.round(data.gpu.mem_used)} / ${Math.round(data.gpu.mem_total)} MB VRAM Used`;
+                updateChartData(gpuLineChart, gpu);
+            } else {
+                document.getElementById('gpuChartContainer').style.display = 'none';
+                document.getElementById('gpuDetailBadge').style.display = 'none';
+                document.getElementById('gpuBadge').style.display = 'none';
+                document.getElementById('noGpuMessage').classList.remove('d-none');
+            }
+        })
+        .catch(err => console.error("Error fetching metrics:", err));
+}
+
+// Clean up interval if page is closed
+window.addEventListener('beforeunload', () => {
+    if (pollingInterval) clearInterval(pollingInterval);
+});
+</script>
+{% endblock %}

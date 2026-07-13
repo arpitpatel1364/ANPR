@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS detections (
     id INT AUTO_INCREMENT PRIMARY KEY,
     timestamp DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     license_plate VARCHAR(20) NOT NULL,
-    verification_status ENUM('VERIFIED', 'NOT_VERIFIED') NOT NULL,
+    verification_status ENUM('VERIFIED', 'NOT_VERIFIED', 'BLACKLISTED') NOT NULL,
     access_granted ENUM('YES', 'NO') NOT NULL,
     detection_confidence DECIMAL(5,3) NOT NULL DEFAULT 0.000,
     processing_time_ms DECIMAL(10,2) NOT NULL DEFAULT 0.00,
@@ -34,6 +34,18 @@ CREATE TABLE IF NOT EXISTS detections (
 -- Table: allowed_plates
 -- Stores list of authorized license plates
 CREATE TABLE IF NOT EXISTS allowed_plates (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    license_plate VARCHAR(20) NOT NULL UNIQUE,
+    description VARCHAR(255) DEFAULT NULL,
+    added_by VARCHAR(100) DEFAULT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_license_plate (license_plate)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Table: blacklist_plates
+-- Stores list of blacklisted license plates
+CREATE TABLE IF NOT EXISTS blacklist_plates (
     id INT AUTO_INCREMENT PRIMARY KEY,
     license_plate VARCHAR(20) NOT NULL UNIQUE,
     description VARCHAR(255) DEFAULT NULL,

@@ -68,6 +68,7 @@ static/images/verified_plates/**
 plate_detections.csv
 
 # Local service overrides
-*.service.local
-
 *.log
+
+# Large weight files (managed outside Git/LFS)
+newmodel/model.safetensors

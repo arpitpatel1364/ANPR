@@ -36,12 +36,29 @@ Commands:
   backend                      Run backend (systemd use)
   admin                        Run admin panel (systemd use)
 
-  start <all|backend|admin>
-  stop <all|backend|admin>
+  start  <all|backend|admin>
+  stop   <all|backend|admin>
   restart <all|backend|admin>
-  status <all|backend|admin>
-  logs <all|backend|admin>
+  status  <all|backend|admin>
+  logs    <all|backend|admin>
+
+Note: To change GPU/CPU for OCR, re-run setup.sh
 EOF
+}
+
+########################################
+# PADDLE DEVICE CONFIG
+########################################
+
+PADDLE_DEVICE_FILE="$ROOT_DIR/newmodel/.paddle_device"
+
+# Read previously saved device choice (cpu or gpu)
+read_paddle_device() {
+    if [[ -f "$PADDLE_DEVICE_FILE" ]]; then
+        cat "$PADDLE_DEVICE_FILE"
+    else
+        echo "cpu"
+    fi
 }
 
 ########################################
@@ -69,7 +86,7 @@ wait_for_mysql() {
 
 ensure_mysql_running() {
     export DB_HOST="${DB_HOST:-127.0.0.1}"
-    export DB_PORT="${DB_PORT:-3306}"
+    export DB_PORT="${DB_PORT:-3307}"
 
     if is_mysql_ready; then
         log "MySQL already running"
@@ -100,9 +117,16 @@ run_backend() {
     [[ -f "app_multi_camera_lprnet.py" ]] || die "Backend file missing"
 
     export PYTHONPATH="$ROOT_DIR:$PYTHONPATH"
-    
+
+    # Add virtual environment CUDA / cuDNN paths to LD_LIBRARY_PATH so PaddlePaddle can find it
+    export LD_LIBRARY_PATH="$ROOT_DIR/anpr_env/lib/python3.12/site-packages/nvidia/cudnn/lib:$ROOT_DIR/anpr_env/lib/python3.12/site-packages/nvidia/cublas/lib:$ROOT_DIR/anpr_env/lib/python3.12/site-packages/nvidia/cuda_runtime/lib:${LD_LIBRARY_PATH:-}"
+
+    # Export the saved PaddlePaddle device choice so AwirosOCR reads it
+    export ANPR_PADDLE_DEVICE="$(read_paddle_device)"
+    log "Paddle device: ${ANPR_PADDLE_DEVICE^^}  (to change: re-run setup.sh)"
+
     # Force execution on CPU by hiding all CUDA devices
-    export CUDA_VISIBLE_DEVICES="-1"
+    # export CUDA_VISIBLE_DEVICES="-1"
 
     log "Starting backend service..."
 

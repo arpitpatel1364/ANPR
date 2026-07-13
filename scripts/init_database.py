@@ -36,6 +36,7 @@ def main():
         print("📝 Created tables:")
         print("  - detections")
         print("  - allowed_plates")
+        print("  - blacklist_plates")
         print("  - users")
         print("  - cameras")
         print("  - system_settings")

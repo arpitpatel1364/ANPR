@@ -140,6 +140,7 @@
                         {% if session.get('user_role') in ['admin', 'superadmin'] %}
                         <li><a class="dropdown-item" href="#" onclick="editCamera(event, '{{ camera.id }}')"><i class="bi bi-pencil me-2"></i>Edit</a></li>
                         <li><a class="dropdown-item" href="#" onclick="setCameraRoi(event, '{{ camera.id }}')"><i class="bi bi-vector-pen me-2"></i>Set ROI</a></li>
+                        <li><a class="dropdown-item text-warning" href="#" onclick="restartCameraLive(event, '{{ camera.id }}')"><i class="bi bi-arrow-repeat me-2"></i>Restart Stream</a></li>
                         {% endif %}
                         <li><a class="dropdown-item" href="#" onclick="testCameraLive(event, '{{ camera.id }}')"><i class="bi bi-wifi me-2"></i>Test Connection (Live)</a></li>
                         <li><a class="dropdown-item" href="#" onclick="refreshCamerasLive()"><i class="bi bi-arrow-clockwise me-2"></i>Refresh Status</a></li>
@@ -736,6 +737,74 @@
                 }
                 button.innerHTML = originalText;
                 button.disabled = false;
+            });
+    }
+
+    // Restart camera stream
+    function restartCameraLive(event, cameraId) {
+        if (event && typeof event.preventDefault === 'function') {
+            event.preventDefault();
+        }
+
+        const card = document.querySelector(`[data-camera-id="${cameraId}"]`);
+        let button = null;
+        if (event && event.target) {
+            button = event.target.closest('a');
+        }
+
+        const originalText = button ? button.innerHTML : 'Restart Stream';
+
+        if (button) {
+            button.innerHTML = '<i class="bi bi-hourglass-split me-2"></i>Restarting...';
+            button.classList.add('disabled');
+        }
+
+        if (card) {
+            const connectionBadge = card.querySelector('.camera-connection-badge');
+            if (connectionBadge) {
+                connectionBadge.className = 'camera-connection-badge badge badge-modern bg-warning-gradient';
+                connectionBadge.innerHTML = '<i class="bi bi-arrow-repeat me-1"></i>Restarting...';
+            }
+        }
+
+        fetch(`/cameras/restart/${cameraId}`, {
+            method: 'POST'
+        })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    if (typeof showSuccess === 'function') {
+                        showSuccess(data.message);
+                    }
+                    // Wait a bit for the restart to happen before polling status
+                    setTimeout(() => {
+                        fetch(`/cameras/status/${cameraId}`)
+                            .then(r => r.json())
+                            .then(statusData => {
+                                if (statusData.success) {
+                                    updateCameraCard(statusData.data);
+                                }
+                            });
+                    }, 2500);
+                } else {
+                    if (typeof showError === 'function') {
+                        showError(data.message);
+                    } else {
+                        alert(data.message);
+                    }
+                }
+            })
+            .catch(error => {
+                console.error('Error restarting camera:', error);
+                if (typeof showError === 'function') {
+                    showError('Failed to request restart');
+                }
+            })
+            .finally(() => {
+                if (button) {
+                    button.innerHTML = originalText;
+                    button.classList.remove('disabled');
+                }
             });
     }
 
