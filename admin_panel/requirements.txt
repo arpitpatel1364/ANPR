@@ -7,3 +7,4 @@ pandas==2.1.1
 python-dateutil==2.8.2
 psutil==5.9.6
 eventlet==0.33.3
+flask-wtf==1.1.1

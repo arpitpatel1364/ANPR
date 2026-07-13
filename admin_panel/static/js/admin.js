@@ -394,19 +394,27 @@ function updateDetectionFeed(data) {
             
             // Only show notification if:
             // 1. Initial page load is complete (don't show notifications for data loaded on page load)
-            // 2. It's a verified plate
+            // 2. It's a verified or blacklisted plate
             // 3. It's actually a new detection (happened after page load or after last known detection)
             const isNewDetection = detectionTime && (
                 detectionTime > pageLoadTime || 
                 (lastDetectionTimestamp && detectionTime > lastDetectionTimestamp)
             );
             
-            // Only show notification for truly new, verified detections (after initial load)
-            if (initialLoadComplete && latestDetection.verification_status === 'VERIFIED' && latestDetection.plate && isNewDetection) {
-                showNotification(`Verified plate detected: ${latestDetection.plate}`, 'success');
-                // Update last detection timestamp
-                if (detectionTime) {
-                    lastDetectionTimestamp = detectionTime;
+            // Only show notification for truly new detections (after initial load)
+            if (initialLoadComplete && isNewDetection) {
+                if (latestDetection.verification_status === 'BLACKLISTED' && latestDetection.plate) {
+                    showNotification(`BLACK-LISTED plate detected: ${latestDetection.plate}!`, 'danger', 10000);
+                    // Update last detection timestamp
+                    if (detectionTime) {
+                        lastDetectionTimestamp = detectionTime;
+                    }
+                } else if (latestDetection.verification_status === 'VERIFIED' && latestDetection.plate) {
+                    showNotification(`Verified plate detected: ${latestDetection.plate}`, 'success');
+                    // Update last detection timestamp
+                    if (detectionTime) {
+                        lastDetectionTimestamp = detectionTime;
+                    }
                 }
             }
             
@@ -417,7 +425,11 @@ function updateDetectionFeed(data) {
             
             // Add to activity feed (but only for new detections)
             if (isNewDetection) {
-                addActivityItem('New Detection', `Plate ${latestDetection.plate || 'Unknown'} detected by ${latestDetection.camera_name || latestDetection.camera || 'Unknown Camera'}`, 'camera-video', 'success');
+                if (latestDetection.verification_status === 'BLACKLISTED') {
+                    addActivityItem('Security Alert', `Blacklisted plate ${latestDetection.plate || 'Unknown'} detected by ${latestDetection.camera_name || latestDetection.camera || 'Unknown Camera'}`, 'shield-slash', 'danger');
+                } else {
+                    addActivityItem('New Detection', `Plate ${latestDetection.plate || 'Unknown'} detected by ${latestDetection.camera_name || latestDetection.camera || 'Unknown Camera'}`, 'camera-video', 'success');
+                }
             }
         }
 
@@ -652,11 +664,9 @@ function handleCameraToggleResult(data) {
     const toggleButton = cameraElement?.querySelector('button[onclick*="toggleCameraLive"]');
     
     if (data.success) {
-        // UI already updated, restore button state
+        // Apply final correct state and re-enable button
         if (toggleButton) {
-            const buttonText = data.enabled ? 'Disable' : 'Enable';
-            const iconClass = data.enabled ? 'bi-pause' : 'bi-play';
-            toggleButton.innerHTML = `<i class="bi ${iconClass} me-1"></i>${buttonText}`;
+            updateCameraUI(data.camera_id, data.enabled);
             toggleButton.disabled = false;
             toggleButton.classList.remove('processing');
         }
@@ -670,14 +680,11 @@ function handleCameraToggleResult(data) {
         refreshPageData();
        
     } else {
-        // Revert UI changes on failure
+        // Revert UI changes on failure to original state
         if (cameraElement) {
-            const currentEnabled = data.enabled;
-            updateCameraUI(data.camera_id, !currentEnabled);
+            const originalEnabled = toggleButton ? (toggleButton.getAttribute('data-original-enabled') === 'true') : false;
+            updateCameraUI(data.camera_id, originalEnabled);
             if (toggleButton) {
-                const buttonText = !currentEnabled ? 'Disable' : 'Enable';
-                const iconClass = !currentEnabled ? 'bi-pause' : 'bi-play';
-                toggleButton.innerHTML = `<i class="bi ${iconClass} me-1"></i>${buttonText}`;
                 toggleButton.disabled = false;
                 toggleButton.classList.remove('processing');
             }
@@ -720,8 +727,12 @@ function toggleCameraLive(cameraId, enabled) {
         return;
     }
     
-    // Capture original text before any modifications
+    // Capture original text and state before any modifications
     const originalText = toggleButton ? toggleButton.innerHTML : '';
+    if (toggleButton) {
+        const isCurrentlyEnabled = toggleButton.classList.contains('btn-danger') || toggleButton.getAttribute('data-enabled') === 'true';
+        toggleButton.setAttribute('data-original-enabled', isCurrentlyEnabled ? 'true' : 'false');
+    }
     
     // Show immediate progress feedback
     if (toggleButton) {
@@ -750,9 +761,8 @@ function toggleCameraLive(cameraId, enabled) {
         // Fallback timeout in case response is too slow
         setTimeout(() => {
             if (toggleButton && toggleButton.disabled) {
-                const buttonText = enabled ? 'Disable' : 'Enable';
-                const iconClass = enabled ? 'bi-pause' : 'bi-play';
-                toggleButton.innerHTML = `<i class="bi ${iconClass} me-1"></i>${buttonText}`;
+                // If it timed out, assume state is enabled
+                updateCameraUI(cameraId, enabled);
                 toggleButton.disabled = false;
                 toggleButton.classList.remove('processing');
             }
@@ -763,19 +773,44 @@ function toggleCameraLive(cameraId, enabled) {
             refreshPageData();
         }, 1500); // 1.5 second timeout
     } else {
-        // Revert UI on error
-        if (toggleButton) {
-            toggleButton.innerHTML = originalText;
-            toggleButton.disabled = false;
-            toggleButton.classList.remove('processing');
-        }
-        updateCameraUI(cameraId, !enabled);
-        if (cameraElement) {
-            cameraElement.classList.remove('processing');
-        }
-        showNotification('WebSocket not connected. Please refresh the page.', 'error');
-        console.error('WebSocket not connected for camera toggle');
-       
+        const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+        fetch(`/cameras/toggle/${cameraId}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': csrfToken
+            }
+        })
+        .then(response => {
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            return response.json();
+        })
+        .then(data => {
+            if (data.success) {
+                updateCameraUI(cameraId, data.enabled);
+                showNotification(data.message, 'success');
+                refreshPageData();
+            } else {
+                const originalEnabled = toggleButton.getAttribute('data-original-enabled') === 'true';
+                updateCameraUI(cameraId, originalEnabled);
+                showNotification(data.message || 'Error toggling camera', 'error');
+            }
+        })
+        .catch(error => {
+            console.error('HTTP Toggle fallback error:', error);
+            const originalEnabled = toggleButton.getAttribute('data-original-enabled') === 'true';
+            updateCameraUI(cameraId, originalEnabled);
+            showNotification('Error toggling camera: ' + error.message, 'error');
+        })
+        .finally(() => {
+            if (toggleButton) {
+                toggleButton.disabled = false;
+                toggleButton.classList.remove('processing');
+            }
+            if (cameraElement) {
+                cameraElement.classList.remove('processing');
+            }
+        });
     }
 }
 
@@ -795,12 +830,15 @@ function updateCameraUI(cameraId, enabled) {
         // Update button
         const toggleButton = cameraElement.querySelector('button[onclick*="toggleCameraLive"]');
         if (toggleButton) {
-            const buttonClass = enabled ? 'btn btn-sm btn-warning btn-modern btn-modern-enhanced' : 'btn btn-sm btn-success btn-modern btn-modern-enhanced';
-            const buttonText = enabled ? 'Disable' : 'Enable';
-            const iconClass = enabled ? 'bi-pause' : 'bi-play';
+            // Match exactly with the backend template's colors, icons, casing, and dynamic onclick arguments
+            const buttonClass = enabled ? 'btn btn-sm btn-danger fw-bold' : 'btn btn-sm btn-success fw-bold';
+            const buttonText = enabled ? 'DISABLE' : 'ENABLE';
+            const iconClass = enabled ? 'bi-stop-circle' : 'bi-play-circle';
             
             toggleButton.className = buttonClass;
             toggleButton.innerHTML = `<i class="bi ${iconClass} me-1"></i>${buttonText}`;
+            toggleButton.setAttribute('data-enabled', enabled ? 'true' : 'false');
+            toggleButton.setAttribute('onclick', `toggleCameraLive('${cameraId}', ${!enabled})`);
         }
         
         // Add visual feedback
@@ -858,7 +896,7 @@ function addActivityItem(title, message, icon, type = 'info') {
     const activityItem = document.createElement('div');
     activityItem.className = 'activity-item new';
     
-    const iconClass = type === 'success' ? 'success' : type === 'warning' ? 'warning' : 'primary';
+    const iconClass = type === 'success' ? 'success' : type === 'warning' ? 'warning' : type === 'danger' || type === 'error' ? 'danger' : 'primary';
     
     activityItem.innerHTML = `
         <div class="activity-icon bg-${iconClass}-gradient">
@@ -942,10 +980,12 @@ function controlANPRService(action) {
     button.innerHTML = `<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>`;
     button.disabled = true;
     
+    const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
     fetch('/api/service/control', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
+            'X-CSRFToken': csrfToken
         },
         body: JSON.stringify({ action: action })
     })
@@ -1053,7 +1093,7 @@ function refreshRecentDetectionsTable(detections) {
         const status = d.verification_status || '-';
         const camera = d.camera || '-';
         const conf = d.confidence ? (parseFloat(d.confidence) * 100).toFixed(1) + '%' : '-';
-        const badgeClass = status === 'VERIFIED' ? 'bg-success-gradient' : 'bg-warning-gradient';
+        const badgeClass = status === 'VERIFIED' ? 'bg-success-gradient' : status === 'BLACKLISTED' ? 'bg-danger-gradient' : 'bg-warning-gradient';
         
         const ann = d.image_full_annotated || '';
         const x1 = d.bbox_x1;
@@ -2177,7 +2217,7 @@ function removeNotificationFromStack(notification) {
 function getTitleForType(type) {
     const titles = {
         'success': 'Success',
-        'danger': 'Error',
+        'danger': 'Security Alert',
         'warning': 'Warning',
         'info': 'Information'
     };

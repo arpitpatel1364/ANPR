@@ -125,16 +125,27 @@ class WebSocketManager:
                     self.last_seen_id = max_id
                     self.last_detection_time = datetime.now().isoformat()
 
+                    # Get accurate total count from DB for dashboard
+                    try:
+                        with DatabaseConnection() as _db:
+                            _db.execute("SELECT COUNT(*) as total FROM detections")
+                            _res = _db.fetchone()
+                            total_count = int(_res['total']) if _res else self.last_detection_count
+                    except Exception:
+                        total_count = self.last_detection_count + len(new_detections)
+                    self.last_detection_count = total_count
+
                     # Broadcast to all connected clients
                     self.socketio.emit('new_detections', {
                         'detections': new_detections,
-                        'count': max_id,
+                        'count': len(new_detections),   # number of NEW detections in this batch
+                        'total': total_count,            # total all-time detections
                         'timestamp': self.last_detection_time
                     }, broadcast=True)
 
                     self.socketio.emit('detection_update', {
                         'new_count': len(new_detections),
-                        'total_count': max_id,
+                        'total_count': total_count,
                         'latest_detection': new_detections[0] if new_detections else None
                     }, room='dashboard')
 
@@ -207,7 +218,7 @@ class WebSocketManager:
             result = False
             for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
                 try:
-                    if proc.info['cmdline'] and 'app_multi_camera_lprnet.py' in ' '.join(proc.info['cmdline']):
+                    if proc.info['cmdline'] and 'app_multi_camera.py' in ' '.join(proc.info['cmdline']):
                         result = True
                         break
                 except (psutil.NoSuchProcess, psutil.AccessDenied):
@@ -815,7 +826,7 @@ def broadcast_reload_plates():
             socketio.emit('reload_plates', {
                 'timestamp': datetime.now().isoformat(),
                 'message': 'Allowed plates updated in admin panel'
-            }, broadcast=True)
+            })
             print("📡 Broadcast reload_plates signal to ANPR service")
         except Exception as e:
             print(f"⚠️ Error broadcasting reload_plates: {e}")

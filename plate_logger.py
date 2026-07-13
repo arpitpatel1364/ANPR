@@ -2,7 +2,7 @@ import os
 import json
 import time
 from datetime import datetime
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 import threading
 import queue
 from db_connection import get_connection, DatabaseConnection, execute_query, initialize_database
@@ -260,7 +260,7 @@ class PlateLogger:
             'clean_plate': clean_plate
         }
     
-    def should_log_detection(self, plate: str, confidence: float, custom_dedup: int | None = None, custom_threshold: float | None = None) -> tuple[bool, str]:
+    def should_log_detection(self, plate: str, confidence: float, custom_dedup: Optional[int] = None, custom_threshold: Optional[float] = None) -> Tuple[bool, str]:
         """
         Determine if a detection should be logged based on deduplication rules
         
@@ -324,18 +324,18 @@ class PlateLogger:
                 del self.recent_detections[plate]
                 self.active_detections_count = max(0, self.active_detections_count - 1)
     
-    def log_detection(self, 
-                     plate: str, 
+    def log_detection(self,
+                     plate: str,
                      detection_confidence: float = 0.0,
                      processing_time_ms: float = 0.0,
                      camera_source: str = "unknown",
-                     image_full_annotated: str | None = None,
-                     bbox_x1: int | None = None,
-                     bbox_y1: int | None = None,
-                     bbox_x2: int | None = None,
-                     bbox_y2: int | None = None,
-                     custom_dedup: int | None = None,
-                     custom_threshold: float | None = None):
+                     image_full_annotated: Optional[str] = None,
+                     bbox_x1: Optional[int] = None,
+                     bbox_y1: Optional[int] = None,
+                     bbox_x2: Optional[int] = None,
+                     bbox_y2: Optional[int] = None,
+                     custom_dedup: Optional[int] = None,
+                     custom_threshold: Optional[float] = None):
         """
         Log a license plate detection to CSV with intelligent deduplication
         
@@ -494,9 +494,10 @@ class PlateLogger:
                 if current_time - timestamp < self.dedup_window * 2:
                     active_detections += 1
                     total_detection_count += count
-                    
-                    # Check if this plate is verified
-                    if plate in self.allowed_plates:
+
+                    # Query DB (uses cache internally — no extra DB round-trip per call)
+                    plate_status = check_plate_status(plate)
+                    if plate_status == 'VERIFIED':
                         verified_count += 1
                     else:
                         unverified_count += 1

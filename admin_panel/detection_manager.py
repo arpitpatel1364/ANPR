@@ -578,14 +578,70 @@ def detection_stats():
 
 @detection_bp.route('/detections/image/<path:filename>')
 def get_detection_image(filename):
-    """Serve detection image"""
-    image_path = os.path.join('static/images/verified_plates', filename)
-    
-    if os.path.exists(image_path):
-        return send_file(image_path)
-    else:
-        # Return a placeholder image or 404
-        return jsonify({'error': 'Image not found'}), 404
+    """Serve a detection image with full exception handling.
+
+    Handles both relative paths (e.g. 'cam1/frame.webp') and absolute paths
+    stored historically in the DB (e.g. '/home/.../static/images/verified_plates/cam1/frame.webp').
+    Returns a 1×1 transparent placeholder GIF on any error so the browser
+    renders nothing instead of a broken-image icon.
+    """
+    import logging
+
+    # 1×1 transparent GIF — returned for all error cases
+    _PLACEHOLDER = (
+        b'GIF89a\x01\x00\x01\x00\x80\x00\x00\xff\xff\xff\x00\x00\x00'
+        b'!\xf9\x04\x01\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01'
+        b'\x00\x00\x02\x02D\x01\x00;'
+    )
+
+    def placeholder_response():
+        from flask import Response
+        return Response(_PLACEHOLDER, status=200, mimetype='image/gif')
+
+    try:
+        # Resolve base directory (canonicalised absolute path)
+        base_dir = os.path.realpath(
+            os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                         'static', 'images', 'verified_plates')
+        )
+
+        # If filename is an absolute path (legacy DB entries), strip the base prefix
+        if os.path.isabs(filename):
+            real_filename = os.path.realpath(filename)
+            # Allow only paths that live inside our images directory
+            if not real_filename.startswith(base_dir):
+                logging.warning(f'[ImageServe] Path traversal blocked: {filename}')
+                return placeholder_response()
+            image_path = real_filename
+        else:
+            # Relative path — join safely
+            image_path = os.path.realpath(os.path.join(base_dir, filename))
+            if not image_path.startswith(base_dir):
+                logging.warning(f'[ImageServe] Path traversal blocked: {filename}')
+                return placeholder_response()
+
+        if not os.path.isfile(image_path):
+            logging.debug(f'[ImageServe] File not found: {image_path}')
+            return placeholder_response()
+
+        # Determine MIME type from extension
+        ext = os.path.splitext(image_path)[1].lower()
+        mime_map = {'.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+                    '.png': 'image/png', '.webp': 'image/webp',
+                    '.gif': 'image/gif'}
+        mimetype = mime_map.get(ext, 'application/octet-stream')
+
+        return send_file(image_path, mimetype=mimetype)
+
+    except PermissionError as e:
+        logging.error(f'[ImageServe] Permission denied for {filename}: {e}')
+        return placeholder_response()
+    except FileNotFoundError as e:
+        logging.warning(f'[ImageServe] File not found for {filename}: {e}')
+        return placeholder_response()
+    except Exception as e:
+        logging.error(f'[ImageServe] Unexpected error serving {filename}: {e}')
+        return placeholder_response()
 
 @detection_bp.route('/detections/delete/<int:detection_id>', methods=['POST'])
 @admin_required

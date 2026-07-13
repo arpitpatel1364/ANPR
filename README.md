@@ -64,7 +64,7 @@ sudo journalctl -u anpr-admin-panel -f
 ## System Features
 
 * **Centralized Dashboard:** Manage your cameras, regions of interest (ROI), allowed license plates, and system settings completely from the modern web UI. No more editing JSON configuration files.
-* **Asynchronous AI Pipeline:** The core engine (`app_multi_camera_lprnet.py`) runs an advanced multi-process loop that handles frame grabbing, inference, and database writing completely asynchronously to eliminate bottlenecking.
+* **Asynchronous AI Pipeline:** The core engine (`app_multi_camera.py`) runs an advanced multi-process loop that handles frame grabbing, inference, and database writing completely asynchronously to eliminate bottlenecking.
 * **Database Integration:** Seamlessly integrated with MySQL. The system uses a centralized database for zero-downtime camera updates and robust historical data logging.
 * **Live ROI Editor:** Define custom polygon regions of interest for each camera directly in the web browser using a live snapshot from the camera stream.
 
@@ -74,7 +74,7 @@ sudo journalctl -u anpr-admin-panel -f
 
 ```
 ANPR/
-├── app_multi_camera_lprnet.py   # Core asynchronous AI inference engine
+├── app_multi_camera.py          # Core asynchronous AI inference engine
 ├── run.sh                       # Unified service management controller
 ├── setup.sh                     # Turnkey installation and migration script
 ├── db_connection.py             # Global MySQL connection pool manager

@@ -47,18 +47,17 @@ def reload_plates_in_anpr():
         return False, str(e)
 
 def save_allowed_plates(plates_list):
-    """Save allowed plates to MySQL database"""
+    """Save/merge allowed plates to MySQL database without wiping existing ones."""
     try:
         with DatabaseConnection() as db:
-            # Clear existing plates
-            db.execute("DELETE FROM allowed_plates")
-            
-            # Insert new plates
             for plate in plates_list:
                 clean_plate = plate.strip().upper()
                 if clean_plate:
-                    db.execute("INSERT INTO allowed_plates (license_plate) VALUES (%s) ON DUPLICATE KEY UPDATE license_plate = license_plate", (clean_plate,))
-        
+                    db.execute(
+                        "INSERT INTO allowed_plates (license_plate) VALUES (%s) "
+                        "ON DUPLICATE KEY UPDATE license_plate = license_plate",
+                        (clean_plate,)
+                    )
         return True
     except Exception as e:
         flash(f'Error saving allowed plates: {str(e)}', 'error')
@@ -66,23 +65,75 @@ def save_allowed_plates(plates_list):
 
 @plate_bp.route('/plates')
 def plates():
-    """Plate management page"""
-    data = load_allowed_plates()
-    plates = data.get('allowed_plates', [])
-    
-    return render_template('plates.html', plates=plates, total_count=len(plates))
+    """Plate management page with optional pagination (activates when > 25 records)"""
+    page = request.args.get('page', 1, type=int)
+    per_page = 25
+
+    blacklisted_plates = []
+    total_count = 0
+    plates_list = []
+    total_pages = 1
+
+    try:
+        with DatabaseConnection() as db:
+            # Total count
+            db.execute("SELECT COUNT(*) as cnt FROM allowed_plates")
+            row = db.fetchone()
+            total_count = row['cnt'] if row else 0
+
+            if total_count > per_page:
+                # Server-side pagination
+                offset = (page - 1) * per_page
+                db.execute(
+                    "SELECT license_plate, description FROM allowed_plates "
+                    "ORDER BY license_plate LIMIT %s OFFSET %s",
+                    (per_page, offset)
+                )
+                total_pages = (total_count + per_page - 1) // per_page
+            else:
+                # Load all — no pagination needed
+                db.execute("SELECT license_plate, description FROM allowed_plates ORDER BY license_plate")
+                page = 1
+
+            rows = db.fetchall()
+            plates_list = [{'plate': r['license_plate'], 'description': r['description'] or ''} for r in rows]
+
+            # Blacklisted plates
+            db.execute("SELECT id, license_plate, description, added_by, created_at FROM blacklist_plates ORDER BY license_plate")
+            for row in db.fetchall():
+                blacklisted_plates.append({
+                    'id': row['id'],
+                    'license_plate': row['license_plate'],
+                    'description': row['description'] or '',
+                    'added_by': row['added_by'] or 'Admin',
+                    'created_at': row['created_at'].strftime('%Y-%m-%d %H:%M:%S') if row['created_at'] else ''
+                })
+    except Exception as e:
+        flash(f'Error loading plates: {str(e)}', 'error')
+
+    paginated = total_count > per_page
+
+    return render_template('plates.html',
+                           plates=plates_list,
+                           total_count=total_count,
+                           blacklisted_plates=blacklisted_plates,
+                           total_blacklisted=len(blacklisted_plates),
+                           page=page,
+                           total_pages=total_pages,
+                           per_page=per_page,
+                           paginated=paginated)
 
 @plate_bp.route('/plates/add', methods=['POST'])
 @admin_required
 def add_plate():
-    """Add new plate"""
+    """Add new plate with optional description"""
     plate = request.form.get('plate', '').strip().upper()
-    
+    description = request.form.get('description', '').strip()
+
     if not plate:
         flash('Plate number is required!', 'error')
         return redirect(url_for('plate.plates'))
 
-    # Simple license plate format validation
     plate_pattern = re.compile(r'^[A-Z]{2}[0-9]{2}[A-Z]{1,3}[0-9]{1,4}$|^[0-9]{2}BH[0-9]{4}[A-Z]{1,2}$')
 
     if not plate_pattern.match(plate):
@@ -92,25 +143,30 @@ def add_plate():
             'error'
         )
         return redirect(url_for('plate.plates'))
-    
+
     try:
         with DatabaseConnection() as db:
-            # Check if plate already exists
+            db.execute("SELECT id FROM blacklist_plates WHERE license_plate = %s", (plate,))
+            if db.fetchone():
+                flash(f'Plate {plate} is blacklisted! Cannot add to allowed list.', 'error')
+                return redirect(url_for('plate.plates'))
+
             db.execute("SELECT id FROM allowed_plates WHERE license_plate = %s", (plate,))
             existing = db.fetchone()
-            
+
             if existing:
                 flash(f'Plate {plate} already exists!', 'warning')
             else:
-                db.execute("INSERT INTO allowed_plates (license_plate) VALUES (%s)", (plate,))
+                db.execute(
+                    "INSERT INTO allowed_plates (license_plate, description) VALUES (%s, %s)",
+                    (plate, description or None)
+                )
                 flash(f'Plate {plate} added successfully!', 'success')
-                
-                # Broadcast reload signal to ANPR service for live updates
                 broadcast_reload_plates()
-                flash(f'plate list updated in ANPR system', 'info')
+                flash('Plate list updated in ANPR system', 'info')
     except Exception as e:
         flash(f'Error adding plate: {str(e)}', 'error')
-    
+
     return redirect(url_for('plate.plates'))
 
 @plate_bp.route('/plates/delete', methods=['POST'])
@@ -157,6 +213,12 @@ def edit_plate():
         
     try:
         with DatabaseConnection() as db:
+            # Check if new plate is in blacklist
+            db.execute("SELECT id FROM blacklist_plates WHERE license_plate = %s", (new_plate,))
+            if db.fetchone():
+                flash(f'Plate {new_plate} is blacklisted! Cannot update to this plate.', 'error')
+                return redirect(url_for('plate.plates'))
+                
             db.execute("UPDATE allowed_plates SET license_plate = %s WHERE license_plate = %s", (new_plate, old_plate))
             if db.cursor.rowcount > 0:
                 flash(f'Plate {old_plate} updated to {new_plate} successfully!', 'success')
@@ -222,11 +284,19 @@ def bulk_add_plates():
             existing_rows = db.fetchall()
             existing_plates = set(row['license_plate'] for row in existing_rows)
             
+            # Get blacklisted plates
+            db.execute("SELECT license_plate FROM blacklist_plates")
+            blacklist_rows = db.fetchall()
+            blacklisted_plates = set(row['license_plate'] for row in blacklist_rows)
+            
             new_plates = []
             duplicates = []
+            blacklisted_skipped = []
             
             for plate in plates:
-                if plate not in existing_plates:
+                if plate in blacklisted_plates:
+                    blacklisted_skipped.append(plate)
+                elif plate not in existing_plates:
                     new_plates.append(plate)
                     existing_plates.add(plate)
                 else:
@@ -257,6 +327,9 @@ def bulk_add_plates():
                     if len(failed_plates) > 3:
                         error_details += f" and {len(failed_plates) - 3} more"
                     flash(f'Failed to add some plates due to database errors: {error_details}', 'error')
+            
+            if blacklisted_skipped:
+                flash(f"Skipped {len(blacklisted_skipped)} plates because they are in the blacklist: {', '.join(blacklisted_skipped[:5])}" + ("..." if len(blacklisted_skipped) > 5 else ""), "error")
             
             if duplicates:
                 flash(f'{len(duplicates)} plates were already in the list', 'warning')
@@ -298,3 +371,111 @@ def search_plates():
         return jsonify(matching_plates)
     except Exception as e:
         return jsonify([])
+
+@plate_bp.route('/plates/blacklist/add', methods=['POST'])
+@admin_required
+def add_blacklist_plate():
+    """Add plate to blacklist"""
+    plate = request.form.get('plate', '').strip().upper()
+    description = request.form.get('description', '').strip()
+    from flask import session
+    added_by = session.get('username') or 'Admin'
+    
+    if not plate:
+        flash('Plate number is required!', 'error')
+        return redirect(url_for('plate.plates'))
+
+    plate_pattern = re.compile(r'^[A-Z]{2}[0-9]{2}[A-Z]{1,3}[0-9]{1,4}$|^[0-9]{2}BH[0-9]{4}[A-Z]{1,2}$')
+
+    if not plate_pattern.match(plate):
+        flash('Invalid plate format!', 'error')
+        return redirect(url_for('plate.plates'))
+    
+    try:
+        with DatabaseConnection() as db:
+            # Check if it exists in allowed plates
+            db.execute("SELECT id FROM allowed_plates WHERE license_plate = %s", (plate,))
+            if db.fetchone():
+                flash(f'Plate {plate} is in the allowed list! Cannot add to blacklist.', 'error')
+                return redirect(url_for('plate.plates'))
+                
+            # Check if it already exists in blacklist
+            db.execute("SELECT id FROM blacklist_plates WHERE license_plate = %s", (plate,))
+            existing = db.fetchone()
+            
+            if existing:
+                flash(f'Plate {plate} is already in the blacklist!', 'warning')
+            else:
+                db.execute("INSERT INTO blacklist_plates (license_plate, description, added_by) VALUES (%s, %s, %s)", (plate, description, added_by))
+                flash(f'Plate {plate} blacklisted successfully!', 'success')
+                
+                # Broadcast reload signal
+                broadcast_reload_plates()
+    except Exception as e:
+        flash(f'Error blacklisting plate: {str(e)}', 'error')
+    
+    return redirect(url_for('plate.plates'))
+
+@plate_bp.route('/plates/blacklist/delete', methods=['POST'])
+@admin_required
+def delete_blacklist_plate():
+    """Delete plate from blacklist"""
+    plate = request.form.get('plate', '').strip().upper()
+    
+    if not plate:
+        flash('Plate number is required!', 'error')
+        return redirect(url_for('plate.plates'))
+    
+    try:
+        with DatabaseConnection() as db:
+            db.execute("DELETE FROM blacklist_plates WHERE license_plate = %s", (plate,))
+            if db.cursor.rowcount > 0:
+                flash(f'Plate {plate} removed from blacklist successfully!', 'success')
+                broadcast_reload_plates()
+            else:
+                flash(f'Plate {plate} not found in blacklist!', 'error')
+    except Exception as e:
+        flash(f'Error deleting blacklisted plate: {str(e)}', 'error')
+    
+    return redirect(url_for('plate.plates'))
+
+@plate_bp.route('/plates/blacklist/edit', methods=['POST'])
+@admin_required
+def edit_blacklist_plate():
+    """Edit blacklisted plate"""
+    old_plate = request.form.get('old_plate', '').strip().upper()
+    new_plate = request.form.get('new_plate', '').strip().upper()
+    description = request.form.get('description', '').strip()
+    
+    if not old_plate or not new_plate:
+        flash('Both old and new plate numbers are required!', 'error')
+        return redirect(url_for('plate.plates'))
+        
+    plate_pattern = re.compile(r'^[A-Z]{2}[0-9]{2}[A-Z]{1,3}[0-9]{1,4}$|^[0-9]{2}BH[0-9]{4}[A-Z]{1,2}$')
+    if not plate_pattern.match(new_plate):
+        flash('Invalid plate format!', 'error')
+        return redirect(url_for('plate.plates'))
+        
+    try:
+        with DatabaseConnection() as db:
+            # Check if new plate is in allowed list
+            db.execute("SELECT id FROM allowed_plates WHERE license_plate = %s", (new_plate,))
+            if db.fetchone():
+                flash(f'Plate {new_plate} is in the allowed list! Cannot update to this plate.', 'error')
+                return redirect(url_for('plate.plates'))
+                
+            db.execute("UPDATE blacklist_plates SET license_plate = %s, description = %s WHERE license_plate = %s", (new_plate, description, old_plate))
+            if db.cursor.rowcount > 0:
+                flash(f'Blacklisted Plate {old_plate} updated successfully!', 'success')
+                broadcast_reload_plates()
+            else:
+                flash(f'Plate {old_plate} not found in blacklist!', 'error')
+    except Exception as e:
+        if 'Duplicate entry' in str(e):
+            flash(f'Plate {new_plate} already exists in blacklist!', 'error')
+        else:
+            flash(f'Error updating blacklisted plate: {str(e)}', 'error')
+            
+    return redirect(url_for('plate.plates'))
+
+

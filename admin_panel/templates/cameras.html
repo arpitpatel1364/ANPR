@@ -35,7 +35,7 @@
 <!-- Statistics Cards -->
 <div class="row mb-5">
     <div class="col-xl-3 col-md-6 mb-4">
-        <div class="card stats-card-modern card-modern-enhanced">
+        <div class="card stats-card-modern card-modern-enhanced" style="border-left: 4px solid var(--primary);">
             <div class="card-body">
                 <div class="stats-header">
                     <div class="stats-icon-modern bg-primary-gradient">
@@ -56,7 +56,7 @@
     </div>
 
     <div class="col-xl-3 col-md-6 mb-4">
-        <div class="card stats-card-modern card-modern-enhanced">
+        <div class="card stats-card-modern card-modern-enhanced" style="border-left: 4px solid var(--success);">
             <div class="card-body">
                 <div class="stats-header">
                     <div class="stats-icon-modern bg-success-gradient">
@@ -77,7 +77,7 @@
     </div>
 
     <div class="col-xl-3 col-md-6 mb-4">
-        <div class="card stats-card-modern card-modern-enhanced">
+        <div class="card stats-card-modern card-modern-enhanced" style="border-left: 4px solid var(--warning);">
             <div class="card-body">
                 <div class="stats-header">
                     <div class="stats-icon-modern bg-warning-gradient">
@@ -98,7 +98,7 @@
     </div>
 
     <div class="col-xl-3 col-md-6 mb-4">
-        <div class="card stats-card-modern card-modern-enhanced">
+        <div class="card stats-card-modern card-modern-enhanced" style="border-left: 4px solid var(--info);">
             <div class="card-body">
                 <div class="stats-header">
                     <div class="stats-icon-modern bg-info-gradient">
@@ -676,69 +676,8 @@
         }
     }
 
-    // Toggle camera status
-    function toggleCameraLive(cameraId, enable) {
-        const button = event.target.closest('button');
-        const originalText = button.innerHTML;
 
-        // Show loading state
-        button.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Updating...';
-        button.disabled = true;
 
-        fetch(`/cameras/toggle/${cameraId}`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            }
-        })
-            .then(response => {
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
-                }
-                return response.json();
-            })
-            .then(data => {
-                if (data.success) {
-                    // Show success message
-                    if (typeof showSuccess === 'function') {
-                        showSuccess(data.message);
-                    } else {
-                        alert(data.message);
-                    }
-                    // Refresh camera status
-                    setTimeout(() => {
-                        fetch(`/cameras/status/${cameraId}`)
-                            .then(r => r.json())
-                            .then(statusData => {
-                                if (statusData.success) {
-                                    updateCameraCard(statusData.data);
-                                    // Update button
-                                    button.innerHTML = `<i class="bi bi-${data.enabled ? 'stop-circle' : 'play-circle'} me-1"></i>${data.enabled ? 'DISABLE' : 'ENABLE'}`;
-                                    button.className = `btn btn-sm btn-${data.enabled ? 'danger' : 'success'} fw-bold`;
-                                }
-                            });
-                    }, 500);
-                } else {
-                    if (typeof showError === 'function') {
-                        showError(data.message || 'Error toggling camera status');
-                    } else {
-                        alert(data.message || 'Error toggling camera status');
-                    }
-                    button.innerHTML = originalText;
-                    button.disabled = false;
-                }
-            })
-            .catch(error => {
-                console.error('Error:', error);
-                if (typeof showError === 'function') {
-                    showError('Error toggling camera status: ' + error.message);
-                } else {
-                    alert('Error toggling camera status: ' + error.message);
-                }
-                button.innerHTML = originalText;
-                button.disabled = false;
-            });
-    }
 
     // Restart camera stream
     function restartCameraLive(event, cameraId) {
@@ -768,7 +707,10 @@
         }
 
         fetch(`/cameras/restart/${cameraId}`, {
-            method: 'POST'
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content')
+            }
         })
             .then(response => response.json())
             .then(data => {
@@ -981,7 +923,10 @@
 
         fetch('/cameras/capture_test_frame', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 
+                'Content-Type': 'application/json',
+                'X-CSRFToken': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content')
+            },
             body: JSON.stringify({ rtsp_url: camera.rtsp_source || camera.url })
         })
         .then(response => response.json())
@@ -1940,7 +1885,8 @@
             fetch(`/cameras/save_roi/${cameraId}`, {
                 method: 'POST',
                 headers: {
-                    'Content-Type': 'application/json'
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content')
                 },
                 body: JSON.stringify({
                     roi_type: roiType,
@@ -1958,7 +1904,8 @@
                         fetch(`/cameras/reload/${cameraId}`, {
                             method: 'POST',
                             headers: {
-                                'Content-Type': 'application/json'
+                                'Content-Type': 'application/json',
+                                'X-CSRFToken': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content')
                             }
                         })
                             .then(reloadResponse => reloadResponse.json())
@@ -2046,6 +1993,7 @@
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
+                    'X-CSRFToken': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content')
                 },
                 body: JSON.stringify({ action: 'restart' })
             })
@@ -2113,7 +2061,10 @@
 
         fetch('/cameras/capture_test_frame', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 
+                'Content-Type': 'application/json',
+                'X-CSRFToken': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content')
+            },
             body: JSON.stringify({ rtsp_url: rtspUrl })
         })
             .then(response => response.json())
@@ -2154,7 +2105,8 @@
         fetch('/cameras/preview_rtsp', {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json',
+                'X-CSRFToken': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content')
             },
             body: JSON.stringify({ rtsp_url: rtspUrl })
         })

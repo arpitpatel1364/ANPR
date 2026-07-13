@@ -1289,9 +1289,10 @@ class CameraProcessor:
                 else:
                     if logging.getLogger().isEnabledFor(logging.DEBUG):
                         logging.debug(f"[{self.name}] Skipping corrupted frame (H.264 decode error)")
-                # No sleep here — GStreamer appsink(drop=true) already delivers
-                # only the latest decoded frame, so busy-polling is both safe
-                # and necessary to maintain minimum latency.
+                # Brief yield to avoid pegging the CPU between frame reads.
+                # FFmpeg's internal queue delivers at stream FPS; a 4 ms sleep
+                # is well below any 15-30 FPS interval and keeps CPU usage low.
+                time.sleep(0.004)
 
             except Exception as e:
                 if self.headless_mode:

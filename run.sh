@@ -114,7 +114,7 @@ run_backend() {
     [[ -f "$VENV_ACTIVATE" ]] || die "Virtualenv missing. Run setup.sh first"
     source "$VENV_ACTIVATE"
 
-    [[ -f "app_multi_camera_lprnet.py" ]] || die "Backend file missing"
+    [[ -f "app_multi_camera.py" ]] || die "Backend file missing"
 
     export PYTHONPATH="$ROOT_DIR:$PYTHONPATH"
 
@@ -130,7 +130,7 @@ run_backend() {
 
     log "Starting backend service..."
 
-    exec python -u app_multi_camera_lprnet.py 2>&1 | tee -a "$LOG_FILE"
+    exec python -u app_multi_camera.py 2>&1 | tee -a "$LOG_FILE"
 }
 
 ########################################

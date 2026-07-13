@@ -9,7 +9,7 @@
 <!-- Statistics Cards -->
 <div class="row mb-5">
     <div class="col-xl-3 col-md-6 mb-4">
-        <div class="card stats-card-modern card-modern-enhanced">
+        <div class="card stats-card-modern card-modern-enhanced" style="border-left: 4px solid var(--primary);">
             <div class="card-body">
                 <div class="stats-header">
                     <div class="stats-icon-modern bg-primary-gradient">
@@ -30,7 +30,7 @@
     </div>
     
     <div class="col-xl-3 col-md-6 mb-4">
-        <div class="card stats-card-modern card-modern-enhanced">
+        <div class="card stats-card-modern card-modern-enhanced" style="border-left: 4px solid var(--success);">
             <div class="card-body">
                 <div class="stats-header">
                     <div class="stats-icon-modern bg-success-gradient">
@@ -51,7 +51,7 @@
     </div>
     
     <div class="col-xl-3 col-md-6 mb-4">
-        <div class="card stats-card-modern card-modern-enhanced">
+        <div class="card stats-card-modern card-modern-enhanced" style="border-left: 4px solid var(--warning);">
             <div class="card-body">
                 <div class="stats-header">
                     <div class="stats-icon-modern bg-warning-gradient">
@@ -72,7 +72,7 @@
     </div>
     
     <div class="col-xl-3 col-md-6 mb-4">
-        <div class="card stats-card-modern card-modern-enhanced">
+        <div class="card stats-card-modern card-modern-enhanced" style="border-left: 4px solid var(--info);">
             <div class="card-body">
                 <div class="stats-header">
                     <div class="stats-icon-modern bg-info-gradient">
@@ -310,7 +310,7 @@
                                     <span class="fw-bold">{{ detection.License_Plate or '-' }}</span>
                                 </td>
                                 <td>
-                                    <span class="badge badge-modern badge-{{ 'success' if detection.Verification_Status == 'VERIFIED' else 'warning' }}">
+                                    <span class="badge badge-modern badge-{{ 'success' if detection.Verification_Status == 'VERIFIED' else 'danger' if detection.Verification_Status == 'BLACKLISTED' else 'warning' }}">
                                         {{ detection.Verification_Status or '-' }}
                                     </span>
                                 </td>
@@ -475,7 +475,35 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         })
         .catch(err => console.error('Error loading traffic chart:', err));
+
+    // ── Live stat refresh via existing SocketIO detection_update event ──
+    // No extra API call needed — server already broadcasts this whenever a detection arrives.
+    if (typeof io !== 'undefined') {
+        const socket = io();
+        socket.emit('join_room', { room: 'dashboard' });
+
+        socket.on('detection_update', function(data) {
+            // Shape 1: from handle_anpr_detection (full stats)
+            if (data.total_detections !== undefined) {
+                setText('total-detections', data.total_detections);
+                setText('verified-detections', data.verified_detections);
+                setText('unverified-detections', data.not_verified_detections);
+                const total = data.total_detections || 1;
+                const rate = ((data.verified_detections / total) * 100).toFixed(1);
+                setText('verification-rate', rate + '%');
+            }
+            // Shape 2: from _check_new_detections (incremental)
+            if (data.total_count !== undefined) {
+                setText('total-detections', data.total_count);
+            }
+        });
+    }
 });
+
+function setText(id, val) {
+    const el = document.getElementById(id);
+    if (el && val !== undefined && val !== null) el.textContent = val;
+}
 </script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 {% endblock %}

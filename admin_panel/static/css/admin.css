@@ -3563,3 +3563,476 @@ body {
   pointer-events: none;
   transition: transform 0.2s ease;
 }
+
+/* ============================================================
+   PLATE MANAGEMENT PAGE — UX OVERHAUL
+   ============================================================ */
+
+/* ── Action Bar ── */
+.plate-action-bar {
+    background: #fff;
+    border: 1px solid var(--gray-200);
+    border-radius: var(--border-radius-lg);
+    padding: 1.25rem 1.5rem;
+    box-shadow: var(--box-shadow);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    margin-bottom: 1.75rem;
+}
+.plate-action-bar .btn-group-actions {
+    display: flex;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+}
+.plate-action-bar .btn-add-allowed {
+    background: var(--primary-gradient);
+    color: #fff;
+    border: none;
+    border-radius: var(--border-radius);
+    padding: 0.6rem 1.25rem;
+    font-weight: 600;
+    font-size: 0.875rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    cursor: pointer;
+    transition: opacity 0.15s;
+}
+.plate-action-bar .btn-add-allowed:hover { opacity: 0.88; color: #fff; }
+
+.plate-action-bar .btn-bulk {
+    background: transparent;
+    color: var(--primary);
+    border: 1.5px solid var(--primary);
+    border-radius: var(--border-radius);
+    padding: 0.6rem 1.25rem;
+    font-weight: 600;
+    font-size: 0.875rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+.plate-action-bar .btn-bulk:hover {
+    background: var(--primary);
+    color: #fff;
+}
+.plate-action-bar .btn-blacklist {
+    background: transparent;
+    color: var(--danger);
+    border: 1.5px solid var(--danger);
+    border-radius: var(--border-radius);
+    padding: 0.6rem 1.25rem;
+    font-weight: 600;
+    font-size: 0.875rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+.plate-action-bar .btn-blacklist:hover {
+    background: var(--danger);
+    color: #fff;
+}
+
+/* ── Stats Row ── */
+.plate-stats-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1.25rem;
+    margin-bottom: 1.75rem;
+}
+@media (max-width: 768px) {
+    .plate-stats-grid { grid-template-columns: 1fr; }
+}
+.plate-stat-card {
+    background: #fff;
+    border: 1px solid var(--gray-200);
+    border-radius: var(--border-radius-lg);
+    padding: 1.4rem 1.5rem;
+    box-shadow: var(--box-shadow);
+    display: flex;
+    align-items: center;
+    gap: 1.1rem;
+    border-left: 4px solid transparent;
+    transition: box-shadow 0.15s;
+}
+.plate-stat-card:hover { box-shadow: var(--box-shadow-md); }
+.plate-stat-card.allowed  { border-left-color: var(--primary); }
+.plate-stat-card.blacklisted { border-left-color: var(--danger); }
+.plate-stat-card.total    { border-left-color: #6c63ff; }
+
+.plate-stat-icon {
+    width: 52px;
+    height: 52px;
+    border-radius: var(--border-radius);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.4rem;
+    color: #fff;
+    flex-shrink: 0;
+}
+.plate-stat-icon.allowed    { background: var(--primary-gradient); }
+.plate-stat-icon.blacklisted { background: linear-gradient(135deg, #dc3545, #bb2d3b); }
+.plate-stat-icon.total      { background: linear-gradient(135deg, #6c63ff, #4b44cc); }
+
+.plate-stat-body { flex: 1; }
+.plate-stat-label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: var(--gray-500);
+    margin-bottom: 0.2rem;
+}
+.plate-stat-value {
+    font-size: 2rem;
+    font-weight: 700;
+    color: var(--gray-800);
+    line-height: 1.1;
+}
+.plate-stat-desc {
+    font-size: 0.8rem;
+    color: var(--gray-500);
+    margin-top: 0.2rem;
+}
+
+/* ── Search Bar ── */
+.plate-search-bar {
+    background: #fff;
+    border: 1px solid var(--gray-200);
+    border-radius: var(--border-radius-lg);
+    padding: 1rem 1.5rem;
+    box-shadow: var(--box-shadow);
+    margin-bottom: 1.5rem;
+}
+.plate-search-inner {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+.plate-search-wrap {
+    flex: 1;
+    position: relative;
+}
+.plate-search-icon {
+    position: absolute;
+    left: 1rem;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--gray-400);
+    font-size: 1rem;
+    pointer-events: none;
+}
+.plate-search-input {
+    width: 100%;
+    padding: 0.7rem 1rem 0.7rem 2.75rem;
+    border: 1.5px solid var(--gray-300);
+    border-radius: var(--border-radius);
+    font-size: 0.9rem;
+    background: var(--gray-50);
+    transition: border-color 0.15s, box-shadow 0.15s;
+    color: var(--gray-800);
+}
+.plate-search-input::placeholder { color: var(--gray-400); }
+.plate-search-input:focus {
+    outline: none;
+    border-color: var(--primary);
+    background: #fff;
+    box-shadow: 0 0 0 3px rgba(114,169,84,0.12);
+}
+.plate-search-go {
+    background: var(--primary);
+    color: #fff;
+    border: none;
+    border-radius: var(--border-radius);
+    padding: 0.7rem 1.1rem;
+    font-size: 1rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    transition: opacity 0.15s;
+}
+.plate-search-go:hover { opacity: 0.88; }
+.plate-search-clear {
+    background: transparent;
+    color: var(--gray-600);
+    border: 1.5px solid var(--gray-300);
+    border-radius: var(--border-radius);
+    padding: 0.7rem 1rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    transition: all 0.15s;
+    white-space: nowrap;
+}
+.plate-search-clear:hover {
+    border-color: var(--gray-500);
+    background: var(--gray-50);
+    color: var(--gray-800);
+}
+
+/* ── Tab Switcher ── */
+.plate-tab-switcher {
+    display: flex;
+    background: var(--gray-100);
+    border-radius: var(--border-radius-lg);
+    padding: 4px;
+    gap: 4px;
+    margin-bottom: 1.5rem;
+    width: fit-content;
+}
+.plate-tab-btn {
+    background: transparent;
+    border: none;
+    border-radius: calc(var(--border-radius-lg) - 4px);
+    padding: 0.6rem 1.4rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--gray-600);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    transition: all 0.18s;
+    white-space: nowrap;
+}
+.plate-tab-btn:hover { color: var(--gray-800); }
+.plate-tab-btn.active {
+    background: #fff;
+    color: var(--gray-800);
+    box-shadow: 0 1px 4px rgba(0,0,0,0.12);
+}
+.plate-tab-btn .tab-count {
+    font-size: 0.72rem;
+    font-weight: 700;
+    padding: 1px 7px;
+    border-radius: 20px;
+    background: var(--gray-200);
+    color: var(--gray-600);
+    line-height: 1.6;
+}
+.plate-tab-btn.active.allowed-tab .tab-count {
+    background: rgba(114,169,84,0.15);
+    color: var(--primary);
+}
+.plate-tab-btn.active.blacklist-tab .tab-count {
+    background: rgba(220,53,69,0.12);
+    color: var(--danger);
+}
+
+/* ── Table Card ── */
+.plate-table-card {
+    background: #fff;
+    border: 1px solid var(--gray-200);
+    border-radius: var(--border-radius-lg);
+    box-shadow: var(--box-shadow);
+    overflow: hidden;
+}
+.plate-table-card-header {
+    padding: 1.1rem 1.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid var(--gray-200);
+}
+.plate-table-card-header.allowed-header { background: linear-gradient(135deg, #72a954 0%, #5a8a42 100%); }
+.plate-table-card-header.blacklist-header { background: linear-gradient(135deg, #dc3545 0%, #bb2d3b 100%); }
+.plate-table-card-title {
+    font-size: 1rem;
+    font-weight: 700;
+    color: #fff;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin: 0;
+}
+.plate-count-pill {
+    background: rgba(255,255,255,0.22);
+    color: #fff;
+    font-size: 0.75rem;
+    font-weight: 700;
+    padding: 2px 10px;
+    border-radius: 20px;
+}
+
+/* ── Table inside card ── */
+.plate-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+.plate-table thead th {
+    background: var(--gray-50);
+    color: var(--gray-600);
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.7px;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--gray-200);
+    white-space: nowrap;
+}
+.plate-table thead th:first-child { padding-left: 1.5rem; }
+.plate-table thead th:last-child  { padding-right: 1.5rem; text-align: center; }
+
+.plate-table tbody tr {
+    border-bottom: 1px solid var(--gray-100);
+    transition: background 0.12s;
+}
+.plate-table tbody tr:last-child { border-bottom: none; }
+.plate-table tbody tr:hover { background: rgba(114,169,84,0.04); }
+
+.plate-table tbody td {
+    padding: 0.9rem 1rem;
+    vertical-align: middle;
+    font-size: 0.875rem;
+    color: var(--gray-700);
+}
+.plate-table tbody td:first-child { padding-left: 1.5rem; color: var(--gray-400); font-size: 0.8rem; }
+.plate-table tbody td:last-child  { padding-right: 1.5rem; text-align: center; }
+
+.plate-number-badge {
+    font-family: 'Courier New', monospace;
+    font-weight: 700;
+    font-size: 0.95rem;
+    letter-spacing: 1px;
+}
+.plate-number-badge.allowed-plate   { color: var(--primary); }
+.plate-number-badge.blacklist-plate { color: var(--danger); }
+
+/* ── Row action buttons ── */
+.plate-row-actions { display: inline-flex; gap: 0.4rem; }
+.plate-row-btn {
+    width: 32px;
+    height: 32px;
+    border-radius: var(--border-radius-sm);
+    border: 1.5px solid transparent;
+    background: transparent;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.9rem;
+    transition: all 0.15s;
+}
+.plate-row-btn.edit-btn {
+    color: var(--primary);
+    border-color: rgba(114,169,84,0.3);
+}
+.plate-row-btn.edit-btn:hover {
+    background: var(--primary);
+    border-color: var(--primary);
+    color: #fff;
+}
+.plate-row-btn.delete-btn {
+    color: var(--danger);
+    border-color: rgba(220,53,69,0.3);
+}
+.plate-row-btn.delete-btn:hover {
+    background: var(--danger);
+    border-color: var(--danger);
+    color: #fff;
+}
+
+/* ── Empty State ── */
+.plate-empty-state {
+    padding: 3.5rem 2rem;
+    text-align: center;
+}
+.plate-empty-icon {
+    font-size: 3rem;
+    margin-bottom: 1rem;
+    display: block;
+    opacity: 0.35;
+}
+.plate-empty-title {
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: var(--gray-700);
+    margin-bottom: 0.4rem;
+}
+.plate-empty-desc {
+    font-size: 0.875rem;
+    color: var(--gray-500);
+    margin-bottom: 1.25rem;
+}
+
+/* ── Added By badge ── */
+.added-by-badge {
+    display: inline-block;
+    background: var(--gray-800);
+    color: #fff;
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 3px 10px;
+    border-radius: 20px;
+}
+
+/* ── Responsive ── */
+@media (max-width: 576px) {
+    .plate-tab-switcher { width: 100%; }
+    .plate-tab-btn { flex: 1; justify-content: center; }
+    .plate-search-inner { flex-wrap: wrap; }
+    .plate-action-bar { flex-direction: column; align-items: flex-start; }
+}
+/* ── Plate Page Tab Navigation ── */
+.plate-nav-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 0;
+    padding: 0.65rem 1.4rem;
+    background: #fff;
+    border: 1.5px solid var(--gray-300);
+    border-radius: var(--border-radius);
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--gray-600);
+    cursor: pointer;
+    box-shadow: var(--box-shadow);
+    transition: all 0.18s;
+    text-transform: none;
+    letter-spacing: normal;
+}
+.plate-nav-tab:hover {
+    border-color: var(--primary-light);
+    color: var(--primary);
+    box-shadow: var(--box-shadow-md);
+}
+.plate-nav-tab.active {
+    background: var(--primary-gradient);
+    border-color: transparent;
+    color: #fff;
+    box-shadow: 0 4px 12px rgba(114,169,84,0.35);
+}
+.plate-nav-count {
+    display: inline-block;
+    margin-left: 0.6rem;
+    font-size: 0.72rem;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 20px;
+    line-height: 1.6;
+}
+.plate-nav-tab:not(.active) .allowed-count {
+    background: rgba(114,169,84,0.12);
+    color: var(--primary);
+}
+.plate-nav-tab:not(.active) .blacklist-count {
+    background: rgba(220,53,69,0.1);
+    color: var(--danger);
+}
+.plate-nav-tab.active .plate-nav-count {
+    background: rgba(255,255,255,0.25);
+    color: #fff;
+}

@@ -1,10 +1,13 @@
 from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, send_file
 from flask_socketio import SocketIO, emit
+from flask_wtf.csrf import CSRFProtect
 from werkzeug.security import check_password_hash, generate_password_hash
 import os
 import json
 import sys
 import time
+import logging
+from logging.handlers import RotatingFileHandler
 from datetime import datetime, timedelta
 from functools import wraps
 
@@ -24,7 +27,20 @@ from websocket_server import register_websocket_events, set_socketio
 from scripts.config_db import load_config_from_db
 
 app = Flask(__name__)
-app.secret_key = 'anpr_admin_secret_key_2026'
+app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'anpr_admin_secret_key_2026')
+
+# CSRF protection
+csrf = CSRFProtect(app)
+
+# Configure rotating log handler to prevent unbounded log growth
+log_handler = RotatingFileHandler(
+    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'anpr_service.log'),
+    maxBytes=10 * 1024 * 1024,  # 10 MB per file
+    backupCount=5               # keep 5 rotated files
+)
+log_handler.setFormatter(logging.Formatter('[%(asctime)s] %(levelname)s %(message)s'))
+logging.getLogger().addHandler(log_handler)
+logging.getLogger().setLevel(logging.INFO)
 
 # Initialize SocketIO with better error handling
 # Explicitly use threading mode to avoid auto-detection issues
@@ -57,7 +73,15 @@ def after_request(response):
     response.headers['X-XSS-Protection'] = '1; mode=block'
     response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
     response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
-    response.headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://code.jquery.com https://cdn.socket.io https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data: blob:; font-src 'self' https://cdn.jsdelivr.net; connect-src 'self' ws://localhost:8084 wss://localhost:8084 https://cdn.jsdelivr.net https://cdn.socket.io https://cdnjs.cloudflare.com; frame-src 'self'; object-src 'none'; base-uri 'self';"
+    response.headers['Content-Security-Policy'] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://code.jquery.com https://cdn.socket.io https://cdnjs.cloudflare.com; "
+        "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; "
+        "img-src 'self' data: blob:; "
+        "font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com; "
+        "connect-src 'self' ws://localhost:8084 wss://localhost:8084 https://cdn.jsdelivr.net https://cdn.socket.io https://cdnjs.cloudflare.com; "
+        "frame-src 'self'; object-src 'none'; base-uri 'self';"
+    )
     
     # Disable caching for UI updates
     response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate, public, max-age=0'

@@ -80,7 +80,7 @@ class ANPRSystemMonitor:
         try:
             for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
                 try:
-                    if proc.info['cmdline'] and 'app_multi_camera_lprnet.py' in ' '.join(proc.info['cmdline']):
+                    if proc.info['cmdline'] and 'app_multi_camera.py' in ' '.join(proc.info['cmdline']):
                         with self.lock:
                             self.anpr_process = proc
                         return True
