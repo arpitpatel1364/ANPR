@@ -5,8 +5,7 @@ info "Running validation..."
 
 [[ $EUID -ne 0 ]] && die "Run with sudo"
 
-command -v /usr/bin/python3 || die "Python missing"
-command -v /usr/bin/pip || die "pip missing"
+command -v python3 || die "Python missing"
 
 [[ -f "$ROOT_DIR/run.sh" ]] || die "run.sh missing"
 

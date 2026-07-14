@@ -221,6 +221,30 @@
         </div>
     </div>
 
+    <!-- Mobile Bottom Navigation Bar -->
+    <nav class="mobile-bottom-nav" id="mobileBottomNav" aria-label="Mobile navigation">
+        <a href="{{ url_for('dashboard') }}" class="mobile-nav-link {% if request.endpoint == 'dashboard' %}active{% endif %}" id="mobileNavDashboard">
+            <i class="bi bi-speedometer2"></i>
+            <span>Dashboard</span>
+        </a>
+        <a href="{{ url_for('plate.plates') }}" class="mobile-nav-link {% if request.endpoint == 'plate.plates' %}active{% endif %}" id="mobileNavPlates">
+            <i class="bi bi-credit-card"></i>
+            <span>Plates</span>
+        </a>
+        <a href="{{ url_for('camera.cameras') }}" class="mobile-nav-link {% if request.endpoint == 'camera.cameras' %}active{% endif %}" id="mobileNavCameras">
+            <i class="bi bi-camera"></i>
+            <span>Cameras</span>
+        </a>
+        <a href="{{ url_for('detection.detections') }}" class="mobile-nav-link {% if request.endpoint == 'detection.detections' %}active{% endif %}" id="mobileNavDetections">
+            <i class="bi bi-list-ul"></i>
+            <span>Detections</span>
+        </a>
+        <button class="mobile-nav-link" id="mobileNavMore" onclick="toggleMobileSidebar()" aria-label="More options">
+            <i class="bi bi-grid-3x3-gap"></i>
+            <span>More</span>
+        </button>
+    </nav>
+
     <!-- Bootstrap 5 JS -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js" defer></script>
     <!-- jQuery removed — not used in codebase -->
@@ -229,6 +253,36 @@
     <!-- Custom JS -->
     <script src="{{ url_for('static', filename='js/admin.js') }}" defer></script>
     
+    <script>
+    function toggleMobileSidebar() {
+        const sidebar = document.getElementById('sidebar');
+        const overlay = document.getElementById('sidebarOverlay');
+        if (sidebar) {
+            sidebar.classList.toggle('show');
+            if (overlay) overlay.classList.toggle('show');
+        }
+    }
+    // Close sidebar when overlay is tapped on mobile
+    document.addEventListener('DOMContentLoaded', function() {
+        const overlay = document.getElementById('sidebarOverlay');
+        if (overlay) {
+            overlay.addEventListener('click', function() {
+                document.getElementById('sidebar').classList.remove('show');
+                overlay.classList.remove('show');
+            });
+        }
+        // Also wire up the existing close button in sidebar
+        const closeBtn = document.getElementById('sidebarToggle');
+        if (closeBtn) {
+            closeBtn.addEventListener('click', function() {
+                document.getElementById('sidebar').classList.remove('show');
+                const ov = document.getElementById('sidebarOverlay');
+                if (ov) ov.classList.remove('show');
+            });
+        }
+    });
+    </script>
+
     {% block extra_js %}{% endblock %}
 </body>
 </html>

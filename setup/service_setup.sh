@@ -9,8 +9,8 @@ info "Creating services..."
 cat > /etc/systemd/system/anpr-multi-camera.service <<EOF
 [Unit]
 Description=ANPR Backend
-After=network.target mysql.service
-Wants=mysql.service
+After=network.target mysql.service mariadb.service xampp.service
+Wants=mysql.service mariadb.service xampp.service
 
 [Service]
 User=$USER_NAME
@@ -28,8 +28,8 @@ EOF
 cat > /etc/systemd/system/anpr-admin-panel.service <<EOF
 [Unit]
 Description=ANPR Admin
-After=network.target mysql.service
-Wants=mysql.service
+After=network.target mysql.service mariadb.service xampp.service
+Wants=mysql.service mariadb.service xampp.service
 
 [Service]
 User=$USER_NAME

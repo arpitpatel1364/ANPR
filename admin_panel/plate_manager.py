@@ -133,12 +133,12 @@ def add_plate():
         flash('Plate number is required!', 'error')
         return redirect(url_for('plate.plates'))
 
-    plate_pattern = re.compile(r'^[A-Z]{2}[0-9]{2}[A-Z]{1,3}[0-9]{1,4}$|^[0-9]{2}BH[0-9]{4}[A-Z]{1,2}$')
+    plate_pattern = re.compile(r'^[A-Z]{2}[0-9]{2}[A-Z]{2,3}[0-9]{4}$|^[0-9]{2}BH[0-9]{4}[A-Z]{2}$')
 
     if not plate_pattern.match(plate):
         flash(
-            'Invalid plate format! Expected format: GJ01AB1234 '
-            '(2 letters, 2 digits, 2 letters, 4 digits)',
+            'Invalid plate format! Expected 10 or 11 character format '
+            '(e.g., GJ01AB1234 or 21BH1234AA)',
             'error'
         )
         return redirect(url_for('plate.plates'))
@@ -206,9 +206,13 @@ def edit_plate():
         flash('Both old and new plate numbers are required!', 'error')
         return redirect(url_for('plate.plates'))
         
-    plate_pattern = re.compile(r'^[A-Z]{2}[0-9]{2}[A-Z]{1,3}[0-9]{1,4}$|^[0-9]{2}BH[0-9]{4}[A-Z]{1,2}$')
+    plate_pattern = re.compile(r'^[A-Z]{2}[0-9]{2}[A-Z]{2,3}[0-9]{4}$|^[0-9]{2}BH[0-9]{4}[A-Z]{2}$')
     if not plate_pattern.match(new_plate):
-        flash('Invalid plate format!', 'error')
+        flash(
+            'Invalid plate format! Expected 10 or 11 character format '
+            '(e.g., GJ01AB1234 or 21BH1234AA)',
+            'error'
+        )
         return redirect(url_for('plate.plates'))
         
     try:
@@ -255,8 +259,8 @@ def bulk_add_plates():
         return redirect(url_for('plate.plates'))
     
     # Simple license plate format validation patterns
-    plate_pattern = re.compile(r'^[A-Z]{2}[0-9]{2}[A-Z]{1,3}[0-9]{1,4}$|^[0-9]{2}BH[0-9]{4}[A-Z]{1,2}$')
-    sub_pattern = re.compile(r'[A-Z]{2}[0-9]{2}[A-Z]{1,3}[0-9]{1,4}|[0-9]{2}BH[0-9]{4}[A-Z]{1,2}')
+    plate_pattern = re.compile(r'^[A-Z]{2}[0-9]{2}[A-Z]{2,3}[0-9]{4}$|^[0-9]{2}BH[0-9]{4}[A-Z]{2}$')
+    sub_pattern = re.compile(r'[A-Z]{2}[0-9]{2}[A-Z]{2,3}[0-9]{4}|[0-9]{2}BH[0-9]{4}[A-Z]{2}')
     
     plates = []
     invalid_plates = []
@@ -401,10 +405,14 @@ def add_blacklist_plate():
         flash('Plate number is required!', 'error')
         return redirect(url_for('plate.plates'))
 
-    plate_pattern = re.compile(r'^[A-Z]{2}[0-9]{2}[A-Z]{1,3}[0-9]{1,4}$|^[0-9]{2}BH[0-9]{4}[A-Z]{1,2}$')
+    plate_pattern = re.compile(r'^[A-Z]{2}[0-9]{2}[A-Z]{2,3}[0-9]{4}$|^[0-9]{2}BH[0-9]{4}[A-Z]{2}$')
 
     if not plate_pattern.match(plate):
-        flash('Invalid plate format!', 'error')
+        flash(
+            'Invalid plate format! Expected 10 or 11 character format '
+            '(e.g., GJ01AB1234 or 21BH1234AA)',
+            'error'
+        )
         return redirect(url_for('plate.plates'))
     
     try:
@@ -467,9 +475,13 @@ def edit_blacklist_plate():
         flash('Both old and new plate numbers are required!', 'error')
         return redirect(url_for('plate.plates'))
         
-    plate_pattern = re.compile(r'^[A-Z]{2}[0-9]{2}[A-Z]{1,3}[0-9]{1,4}$|^[0-9]{2}BH[0-9]{4}[A-Z]{1,2}$')
+    plate_pattern = re.compile(r'^[A-Z]{2}[0-9]{2}[A-Z]{2,3}[0-9]{4}$|^[0-9]{2}BH[0-9]{4}[A-Z]{2}$')
     if not plate_pattern.match(new_plate):
-        flash('Invalid plate format!', 'error')
+        flash(
+            'Invalid plate format! Expected 10 or 11 character format '
+            '(e.g., GJ01AB1234 or 21BH1234AA)',
+            'error'
+        )
         return redirect(url_for('plate.plates'))
         
     try:

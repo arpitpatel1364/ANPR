@@ -376,12 +376,12 @@ import re
 # Relaxed to allow nearby detections/OCR errors but strict on state codes and length 
 # to prevent totally false detections (like KL400, BL282819)
 INDIAN_PLATE_REGEX = re.compile(
-    # Standard format: State(2) RTO(2) Series(1-3) Number(4)
+    # Standard format: State(2) RTO(2) Series(2-3) Number(4)
     # We allow numbers/letters interchangeably in RTO & Number blocks to catch OCR errors (like 0 <-> O),
     # but strictly require LETTERS for the State and Series blocks to reject gibberish like 'DG3J3B87252'
-    r'^[A-Z]{2}[0-9A-Z]{2}[A-Z]{1,3}[0-9A-Z]{4}$'
-    # BH Series format: Year(2) BH(2) Number(4) Suffix(1-2)
-    r'|^[0-9A-Z]{2}BH[0-9A-Z]{4}[A-Z]{1,2}$'
+    r'^[A-Z]{2}[0-9A-Z]{2}[A-Z]{2,3}[0-9A-Z]{4}$'
+    # BH Series format: Year(2) BH(2) Number(4) Suffix(2)
+    r'|^[0-9A-Z]{2}BH[0-9A-Z]{4}[A-Z]{2}$'
 )
 
 def correct_indian_plate(text: str) -> str:
@@ -442,6 +442,9 @@ def correct_indian_plate(text: str) -> str:
     # Step 3: Trailing number block — walk from end, fix to digits
     split_idx = len(middle_and_number)
     for i in range(len(middle_and_number) - 1, -1, -1):
+        # Limit numeric block to at most 4 characters from the end
+        if len(middle_and_number) - i > 4:
+            break
         if middle_and_number[i].isdigit() or middle_and_number[i] in 'OIZSB':
             split_idx = i
         else:
@@ -449,6 +452,9 @@ def correct_indian_plate(text: str) -> str:
             
     series = middle_and_number[:split_idx].translate(to_letter)
     number = middle_and_number[split_idx:].translate(to_digit)
+
+    if number:
+        number = number.zfill(4)
 
     return state + rto + series + number
 
@@ -644,8 +650,8 @@ class CameraProcessor:
 
         cleaned_text = re.sub(r'\s+', '', plate_text.upper())
 
-        # Minimum meaningful plate length guard (9-11 chars)
-        if len(cleaned_text) < 9:
+        # Allow ONLY 10 and 11 characters
+        if len(cleaned_text) not in (10, 11):
             return False
 
         return bool(INDIAN_PLATE_REGEX.match(cleaned_text))

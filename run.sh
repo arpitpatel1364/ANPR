@@ -62,44 +62,69 @@ read_paddle_device() {
 }
 
 ########################################
-# MYSQL CHECK
+# DATABASE CHECK & AUTO-DETECTION
 ########################################
 
-is_mysql_ready() {
-    systemctl is-active --quiet mysql
+is_db_service_active() {
+    systemctl is-active --quiet mysql || systemctl is-active --quiet mariadb || systemctl is-active --quiet xampp
 }
 
-wait_for_mysql() {
+wait_for_db() {
     local timeout_secs=${1:-60}
-    log "Waiting for MySQL service to be active..."
+    log "Waiting for database service to accept connections..."
 
     for ((i=0; i<timeout_secs; i+=2)); do
-        if is_mysql_ready; then
-            log "MySQL is ready"
+        if nc -z 127.0.0.1 3306 || nc -z 127.0.0.1 3307; then
+            log "Database is ready"
             return 0
         fi
         sleep 2
     done
 
-    die "MySQL not ready after ${timeout_secs}s"
+    die "Database not ready/listening after ${timeout_secs}s"
 }
 
 ensure_mysql_running() {
     export DB_HOST="${DB_HOST:-127.0.0.1}"
-    export DB_PORT="${DB_PORT:-3307}"
 
-    if is_mysql_ready; then
-        log "MySQL already running"
+    # Auto-detect already running database port (3306 or 3307)
+    if nc -z 127.0.0.1 3306 >/dev/null 2>&1; then
+        export DB_PORT=3306
+        log "Database detected on active port: $DB_PORT"
+        return 0
+    elif nc -z 127.0.0.1 3307 >/dev/null 2>&1; then
+        export DB_PORT=3307
+        log "Database detected on active port: $DB_PORT"
         return 0
     fi
 
-    log "Verifying MySQL is running..."
-    
-    if ! systemctl is-active --quiet mysql; then
-        die "MySQL service is not running. Start it first or rely on systemd dependencies."
+    log "No active database port detected. Checking database services..."
+
+    # If services are not active, try starting them (in case run.sh is executed manually outside systemd)
+    if ! is_db_service_active; then
+        log "Starting database service..."
+        if systemctl list-unit-files | grep -q "^mariadb.service"; then
+            sudo systemctl start mariadb || true
+        elif systemctl list-unit-files | grep -q "^mysql.service"; then
+            sudo systemctl start mysql || true
+        elif systemctl list-unit-files | grep -q "^xampp.service"; then
+            sudo systemctl start xampp || true
+        fi
     fi
 
-    wait_for_mysql 60
+    # Wait for database to start accepting connections on either port
+    wait_for_db 60
+
+    # Re-detect active port
+    if nc -z 127.0.0.1 3306 >/dev/null 2>&1; then
+        export DB_PORT=3306
+    elif nc -z 127.0.0.1 3307 >/dev/null 2>&1; then
+        export DB_PORT=3307
+    else
+        die "Could not find active database on port 3306 or 3307 after service startup."
+    fi
+
+    log "Database configured to port: $DB_PORT"
 }
 
 ########################################

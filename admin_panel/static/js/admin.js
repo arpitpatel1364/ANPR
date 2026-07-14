@@ -2015,6 +2015,16 @@ function initializeSidebar() {
         });
     }
     
+    // Bottom nav "More" toggle
+    const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+    if (mobileMenuToggle) {
+        mobileMenuToggle.addEventListener('click', function() {
+            sidebar.classList.add('show');
+            sidebarOverlay.classList.add('show');
+            document.body.style.overflow = 'hidden';
+        });
+    }
+    
     // Close sidebar (mobile)
     if (sidebarToggle) {
         sidebarToggle.addEventListener('click', function() {

@@ -49,3 +49,41 @@
     height: auto;
     border-radius: 0.4rem;
 }
+
+@media (max-width: 768px) {
+    /* Camera card button alignment on mobile */
+    .camera-card .card-footer {
+        flex-direction: column !important;
+        gap: 0.5rem !important;
+    }
+    
+    .camera-card .card-footer .btn {
+        width: 100% !important;
+        justify-content: center !important;
+    }
+    
+    /* ROI Canvas Modal responsiveness */
+    #roiCanvas {
+        max-height: 350px !important;
+    }
+    
+    #canvasToolbar {
+        margin: 0.5rem !important;
+    }
+    
+    #toolDelete {
+        margin: 0.5rem !important;
+    }
+    
+    /* Modal footer actions stacked on mobile */
+    .modal-body .d-flex.gap-2.justify-content-end {
+        flex-direction: column !important;
+        gap: 0.5rem !important;
+    }
+    
+    .modal-body .d-flex.gap-2.justify-content-end .btn {
+        width: 100% !important;
+        min-width: 0 !important;
+        margin-left: 0 !important;
+    }
+}
