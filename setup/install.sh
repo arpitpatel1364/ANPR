@@ -12,11 +12,11 @@ if ! dpkg --configure -a --force-confold; then
     apt-get install -f -y || true
 fi
 
-# If mysql-server is half-configured and still broken, purge it so it doesn't block apt-get
+# If mysql-server is half-configured and still broken, force-purge it using dpkg to avoid apt deadlock
 if dpkg -l | grep -q "mysql-server" && ! dpkg --configure -a; then
-    warn "mysql-server package is half-configured and failing. Purging it to unblock package manager..."
+    warn "mysql-server package is half-configured and failing. Force-purging server packages..."
     systemctl stop mysql || true
-    apt-get purge -y mysql-server mysql-server-8.0 mysql-server-core-8.0 mysql-common || true
+    dpkg --purge --force-all mysql-server mysql-server-8.0 mysql-server-core-8.0 || true
     apt-get autoremove -y || true
     apt-get clean
 fi
