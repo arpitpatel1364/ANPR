@@ -68,7 +68,7 @@ def parse_roi_from_form(form):
 def cameras():
     """Camera management page"""
     config = load_config_from_db()
-    cameras = config.get('cameras', []) if config else [] if config else []
+    cameras = config.get('cameras', []) if config else []
     
     return render_template('cameras.html', cameras=cameras)
 
@@ -130,7 +130,7 @@ def add_camera():
         return redirect(url_for('camera.cameras'))
     
     config = load_config_from_db()
-    cameras = config.get('cameras', []) if config else [] if config else []
+    cameras = config.get('cameras', []) if config else []
     
     # Check if ID already exists
     if any(cam['id'] == camera_data['id'] for cam in cameras):
@@ -149,7 +149,7 @@ def add_camera():
 def edit_camera(camera_id):
     """Edit existing camera"""
     config = load_config_from_db()
-    cameras = config.get('cameras', []) if config else [] if config else []
+    cameras = config.get('cameras', []) if config else []
     
     camera_index = None
     for i, cam in enumerate(cameras):
@@ -196,7 +196,7 @@ def edit_camera(camera_id):
 def delete_camera(camera_id):
     """Delete camera"""
     config = load_config_from_db()
-    cameras = config.get('cameras', []) if config else [] if config else []
+    cameras = config.get('cameras', []) if config else []
     
     camera_name = "Unknown"
     for cam in cameras:
@@ -227,7 +227,7 @@ def toggle_camera(camera_id):
     """Toggle camera enabled/disabled status"""
     try:
         config = load_config_from_db()
-        cameras = config.get('cameras', []) if config else [] if config else []
+        cameras = config.get('cameras', []) if config else []
         
         for camera in cameras:
             if camera['id'] == camera_id:
@@ -386,7 +386,7 @@ def save_camera_roi(camera_id):
     
     try:
         config = load_config_from_db()
-        cameras = config.get('cameras', []) if config else [] if config else []
+        cameras = config.get('cameras', []) if config else []
         camera_cfg = next((cam for cam in cameras if str(cam.get('id')) == str(camera_id)), None)
 
         if camera_cfg is None:

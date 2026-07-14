@@ -309,30 +309,28 @@ def dashboard():
 def api_stats():
     """API endpoint for real-time statistics"""
     try:
+        today_start = datetime.combine(datetime.now().date(), datetime.min.time())
         with DatabaseConnection() as db:
-            # Today's detections
-            today = datetime.now().date()
-            db.execute("SELECT COUNT(*) as count FROM detections WHERE DATE(timestamp) = %s", (today,))
-            result = db.fetchone()
-            today_detections = result['count'] if result else 0
-            
-            # Today's verified
             db.execute("""
-                SELECT COUNT(*) as count FROM detections 
-                WHERE DATE(timestamp) = %s AND verification_status = 'VERIFIED'
-            """, (today,))
+                SELECT 
+                    COUNT(*) as total_detections,
+                    SUM(CASE WHEN verification_status = 'VERIFIED' THEN 1 ELSE 0 END) as verified_detections,
+                    SUM(CASE WHEN timestamp >= %s THEN 1 ELSE 0 END) as today_detections,
+                    SUM(CASE WHEN timestamp >= %s AND verification_status = 'VERIFIED' THEN 1 ELSE 0 END) as today_verified
+                FROM detections
+            """, (today_start, today_start))
             result = db.fetchone()
-            today_verified = result['count'] if result else 0
             
-            # Total detections
-            db.execute("SELECT COUNT(*) as count FROM detections")
-            result = db.fetchone()
-            total_detections = result['count'] if result else 0
-            
-            # Verified detections
-            db.execute("SELECT COUNT(*) as count FROM detections WHERE verification_status = 'VERIFIED'")
-            result = db.fetchone()
-            verified_detections = result['count'] if result else 0
+            if result:
+                total_detections = result['total_detections'] or 0
+                verified_detections = int(result['verified_detections'] or 0)
+                today_detections = int(result['today_detections'] or 0)
+                today_verified = int(result['today_verified'] or 0)
+            else:
+                total_detections = 0
+                verified_detections = 0
+                today_detections = 0
+                today_verified = 0
             
             verification_rate = round(
                 (verified_detections / total_detections * 100) if total_detections > 0 else 0, 1

@@ -472,32 +472,34 @@ def export_detections_pdf():
 def detection_stats():
     """Get detection statistics"""
     try:
+        today_start = datetime.combine(datetime.now().date(), datetime.min.time())
         with DatabaseConnection() as db:
-            # Basic stats
-            db.execute("SELECT COUNT(*) as count FROM detections")
+            # Combine basic stats and unique plates count in a single query
+            db.execute("""
+                SELECT 
+                    COUNT(*) as total_detections,
+                    SUM(CASE WHEN verification_status = 'VERIFIED' THEN 1 ELSE 0 END) as verified_detections,
+                    SUM(CASE WHEN verification_status = 'NOT_VERIFIED' THEN 1 ELSE 0 END) as unverified_detections,
+                    SUM(CASE WHEN timestamp >= %s THEN 1 ELSE 0 END) as today_detections,
+                    COUNT(DISTINCT license_plate) as unique_plates
+                FROM detections
+            """, (today_start,))
             result = db.fetchone()
-            total_detections = result['count'] if result else 0
             
-            db.execute("SELECT COUNT(*) as count FROM detections WHERE verification_status = 'VERIFIED'")
-            result = db.fetchone()
-            verified_detections = result['count'] if result else 0
-            
-            db.execute("SELECT COUNT(*) as count FROM detections WHERE verification_status = 'NOT_VERIFIED'")
-            result = db.fetchone()
-            unverified_detections = result['count'] if result else 0
+            if result:
+                total_detections = result['total_detections'] or 0
+                verified_detections = int(result['verified_detections'] or 0)
+                unverified_detections = int(result['unverified_detections'] or 0)
+                today_detections = int(result['today_detections'] or 0)
+                unique_plates = result['unique_plates'] or 0
+            else:
+                total_detections = 0
+                verified_detections = 0
+                unverified_detections = 0
+                today_detections = 0
+                unique_plates = 0
             
             verification_rate = (verified_detections / total_detections * 100) if total_detections > 0 else 0
-            
-            # Today's detections
-            today = datetime.now().date()
-            db.execute("SELECT COUNT(*) as count FROM detections WHERE DATE(timestamp) = %s", (today,))
-            result = db.fetchone()
-            today_detections = result['count'] if result else 0
-            
-            # Unique plates
-            db.execute("SELECT COUNT(DISTINCT license_plate) as count FROM detections")
-            result = db.fetchone()
-            unique_plates = result['count'] if result else 0
             
             # Detections by camera
             db.execute("SELECT camera_source, COUNT(*) as count FROM detections GROUP BY camera_source")

@@ -17,6 +17,7 @@
             </div>
             <div class="card-body p-4 p-md-5">
                 <form action="{{ url_for('settings.settings') }}" method="POST">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
 
                     <h6 class="settings-section-title">Performance Settings</h6>

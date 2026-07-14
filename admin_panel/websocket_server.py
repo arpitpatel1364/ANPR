@@ -66,21 +66,33 @@ class WebSocketManager:
         """Background loop for checking camera connections every 30s"""
         while self.running:
             try:
-                from scripts.config_db import load_config_from_db
-                config = load_config_from_db()
-                if config:
-                    
-                    cameras = config.get('cameras', [])
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-                        futures = {executor.submit(self._test_camera_connection, cam): cam['id'] for cam in cameras}
-                        for future in concurrent.futures.as_completed(futures):
-                            try:
-                                cam_id = futures[future]
-                                res = future.result()
-                                with self.lock:
-                                    self.camera_status_cache[cam_id] = res
-                            except Exception:
-                                pass
+                # Active rooms check: only poll if there are active clients in 'cameras', 'dashboard', or 'system' rooms
+                # to prevent background CPU/network waste when no one is using the admin panel.
+                has_active_clients = False
+                with self.lock:
+                    for room_name in ['cameras', 'dashboard', 'system']:
+                        if len(self.rooms.get(room_name, set())) > 0:
+                            has_active_clients = True
+                            break
+                
+                if has_active_clients:
+                    from scripts.config_db import load_config_from_db
+                    config = load_config_from_db()
+                    if config:
+                        cameras = config.get('cameras', [])
+                        if cameras:
+                            # Dynamic worker size based on number of cameras
+                            max_workers = min(10, len(cameras))
+                            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+                                futures = {executor.submit(self._test_camera_connection, cam): cam['id'] for cam in cameras}
+                                for future in concurrent.futures.as_completed(futures):
+                                    try:
+                                        cam_id = futures[future]
+                                        res = future.result()
+                                        with self.lock:
+                                            self.camera_status_cache[cam_id] = res
+                                    except Exception:
+                                        pass
             except Exception as e:
                 print(f"Error in camera poll loop: {e}")
             time.sleep(30)
@@ -320,42 +332,7 @@ class WebSocketManager:
             for room_clients in self.rooms.values():
                 room_clients.discard(client_id)
     
-    def _get_detections_today(self) -> int:
-        """Get detections count for today"""
-        try:
-            with DatabaseConnection() as db:
-                today = datetime.now().date()
-                db.execute("SELECT COUNT(*) as count FROM detections WHERE DATE(timestamp) = %s", (today,))
-                result = db.fetchone()
-                return result['count'] if result else 0
-        except Exception as e:
-            print(f"Error getting today's detections: {e}")
-            return 0
-    
-    def _get_detections_this_week(self) -> int:
-        """Get detections count for this week"""
-        try:
-            with DatabaseConnection() as db:
-                today = datetime.now()
-                start_of_week = today - timedelta(days=today.weekday())
-                db.execute("SELECT COUNT(*) as count FROM detections WHERE DATE(timestamp) >= %s", (start_of_week.date(),))
-                result = db.fetchone()
-                return result['count'] if result else 0
-        except Exception as e:
-            print(f"Error getting this week's detections: {e}")
-            return 0
-    
-    def _get_detections_this_month(self) -> int:
-        """Get detections count for this month"""
-        try:
-            with DatabaseConnection() as db:
-                this_month = datetime.now().strftime('%Y-%m')
-                db.execute("SELECT COUNT(*) as count FROM detections WHERE DATE_FORMAT(timestamp, '%%Y-%%m') = %s", (this_month,))
-                result = db.fetchone()
-                return result['count'] if result else 0
-        except Exception as e:
-            print(f"Error getting this month's detections: {e}")
-            return 0
+
     
     def _get_all_detection_stats(self) -> Dict[str, Any]:
         """Get all detection statistics in a single query to avoid N+1 queries"""

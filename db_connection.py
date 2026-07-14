@@ -339,10 +339,18 @@ class DatabaseConnection:
         self.connection = get_connection()
         if self.connection:
             try:
-                self.connection.ping(reconnect=True, attempts=3, delay=1)
-            except Error as e:
-                print(f"DatabaseConnection ping failed: {e}")
-            self.cursor = self.connection.cursor(dictionary=True)
+                try:
+                    self.connection.ping(reconnect=True, attempts=3, delay=1)
+                except Error as e:
+                    print(f"DatabaseConnection ping failed: {e}")
+                self.cursor = self.connection.cursor(dictionary=True)
+            except Exception as e:
+                try:
+                    self.connection.close()
+                except Exception:
+                    pass
+                self.connection = None
+                raise e
         return self
     
     def __exit__(self, exc_type, exc_val, exc_tb):
